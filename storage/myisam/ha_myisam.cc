@@ -814,6 +814,8 @@ int ha_myisam::close(void) {
 int ha_myisam::write_row(uchar *buf) {
   ha_statistic_increment(&System_status_var::ha_write_count);
 
+  sql_print_information("write row: %s", buf);
+
   /*
     If we have an auto_increment column and we are writing a changed row
     or a new row, then update the auto_increment value in the record.

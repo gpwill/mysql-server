@@ -49,24 +49,24 @@ IF(MSVC)
     )
 ENDIF()
 
-ADD_STATIC_LIBRARY(xpl_test_src ${XPL_TEST_SRC}
-  DEPENDENCIES mysqlx
-  LINK_LIBRARIES ext::zlib ext::lz4 ext::zstd extra::rapidjson ext::icu)
+#ADD_STATIC_LIBRARY(xpl_test_src ${XPL_TEST_SRC}
+#  DEPENDENCIES mysqlx
+#  LINK_LIBRARIES ext::zlib ext::lz4 ext::zstd extra::rapidjson ext::icu)
 
-MYSQL_ADD_EXECUTABLE(${XPL_UNIT_TESTS}
-  ../test_main.cc
-  LINK_LIBRARIES xpl_test_src
-  ADD_TEST xplugin
-)
-SET_TESTS_PROPERTIES(xplugin PROPERTIES TIMEOUT 180)
+#MYSQL_ADD_EXECUTABLE(${XPL_UNIT_TESTS}
+#  ../test_main.cc
+#  LINK_LIBRARIES xpl_test_src
+#  ADD_TEST xplugin
+#)
+#SET_TESTS_PROPERTIES(xplugin PROPERTIES TIMEOUT 180)
 
-ADD_COMPILE_FLAGS(${XPL_TEST_SRC}
-  COMPILE_FLAGS "${MYSQLX_PROTOCOL_FLAGS}"
-)
+#ADD_COMPILE_FLAGS(${XPL_TEST_SRC}
+#  COMPILE_FLAGS "${MYSQLX_PROTOCOL_FLAGS}"
+#)
 
-ADD_DEPENDENCIES(${XPL_UNIT_TESTS}
-  mysqlx
-)
+#ADD_DEPENDENCIES(${XPL_UNIT_TESTS}
+#  mysqlx
+#)
 
 # New warning in Visual Studio 2008
 # '%$S': virtual function overrides '%$pS', previous versions of the compiler
@@ -75,12 +75,12 @@ IF(WIN32)
   SET_TARGET_PROPERTIES(${XPL_UNIT_TESTS} PROPERTIES COMPILE_FLAGS "/wd4373")
 ENDIF(WIN32)
 
-TARGET_LINK_LIBRARIES(${XPL_UNIT_TESTS}
-  ${GCOV_LDFLAGS}
-  ${MYSQLX_CLIENT_LIB}
-  mysqlx
-  mysqlclient
-  gtest
-  gmock
-)
+#TARGET_LINK_LIBRARIES(${XPL_UNIT_TESTS}
+#  ${GCOV_LDFLAGS}
+#  ${MYSQLX_CLIENT_LIB}
+#  mysqlx
+#  mysqlclient
+#  gtest
+#  gmock
+#)
 

@@ -20,12 +20,16 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
-MYSQL_ADD_PLUGIN(daemon_example
-  daemon_example.cc
-  MODULE_ONLY
-  MODULE_OUTPUT_NAME "libdaemon_example"
-  TEST_ONLY
+include_directories(${Protobuf_INCLUDE_DIRS})
+
+MYSQL_ADD_PLUGIN(storage_agent
+  daemon_example.cc spectrum.grpc.pb.h spectrum.grpc.pb.cc spectrum.pb.h spectrum.pb.cc
+  LINK_LIBRARIES utf8_range::utf8_range utf8_range::utf8_validity protobuf::libprotobuf gRPC::grpc++_reflection gRPC::grpc++ absl::log absl::flags absl::flags_parse absl::check
+  DEFAULT
+  MODULE_OUTPUT_NAME "libstorage_agent"
   )
+
+target_compile_features(storage_agent PUBLIC cxx_std_17)
 
 INSTALL(FILES
   daemon_example.ini

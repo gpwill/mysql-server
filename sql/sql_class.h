@@ -1113,6 +1113,8 @@ class THD : public MDL_context_owner,
   // has status_var already been added to global_status_var?
   bool status_var_aggregated;
 
+  bool is_storage_node;
+
   /**
     Session's connection attributes for the connected client
   */

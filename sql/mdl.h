@@ -1419,6 +1419,10 @@ class MDL_context {
   MDL_context();
   void destroy();
 
+  Ticket_iterator get_tickets_for_duration(enum_mdl_duration duration) {
+    return m_ticket_store.list_iterator(duration);
+  }
+
   bool try_acquire_lock(MDL_request *mdl_request);
   bool acquire_lock(MDL_request *mdl_request, Timeout_type lock_wait_timeout);
   bool acquire_locks(MDL_request_list *requests,

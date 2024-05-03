@@ -204,6 +204,12 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <string>
 #include <vector>
 
+#include "sql/mdl.h"
+#include "spectrum.h"
+#include <grpc/grpc.h>
+#include <grpcpp/create_channel.h>
+#include "plugin/storage_agent/spectrum.grpc.pb.h"
+
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif /* HAVE_UNISTD_H */
@@ -5770,6 +5776,8 @@ static int innobase_commit(handlerton *hton, /*!< in: InnoDB handlerton */
       (!thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN));
   TrxInInnoDB trx_in_innodb(trx, will_commit);
 
+  sql_print_information("innobase_commit[%d]: trxid=%d, all=%d", thd->thread_id(), trx->id, commit_trx);
+
   if (trx_in_innodb.is_aborted()) {
     innobase_rollback(hton, thd, commit_trx);
 
@@ -8971,6 +8979,91 @@ void innobase_get_multi_value(const TABLE *mysql_table, ulint f_idx,
   ut_ad(succ);
 }
 
+void sql_print_row(char* method, TABLE* table) {
+  std::string row;
+  char value_buffer[1024];
+  String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
+  
+  for (Field **field = table->field; *field; field++) {
+    if (table->read_set && !bitmap_is_set(table->read_set, (*field)->field_index())) {
+      break;
+    }
+    row += (*field)->field_name;
+    row += '=';
+    if (!(*field)->is_null()) {
+      (*field)->val_str(&value, &value);
+      row += value.c_ptr();
+    }
+    row += ", ";
+  }
+  if (row.length() >= 2) {
+    row.pop_back();
+    row.pop_back();
+  }
+  sql_print_information("%s[%s]: %s", method, table->s->table_name.str, row.c_str());
+}
+
+void spectrum_thread_fill_mdl_list_for_duration(THD *thd, spectrum::Thread *spectrum_thread, enum_mdl_duration duration) {
+  MDL_context::Ticket_iterator it = thd->mdl_context.get_tickets_for_duration(duration);
+  for (MDL_ticket *t = it++; t != nullptr; t = it++) {
+    spectrum::MDL *spectrum_mdl = spectrum_thread->add_mdl_list();
+    spectrum_mdl->set_namespace_(t->get_key()->mdl_namespace());
+    spectrum_mdl->set_schema(t->get_key()->db_name());
+    spectrum_mdl->set_table(t->get_key()->name());
+    spectrum_mdl->set_column(t->get_key()->col_name());
+    spectrum_mdl->set_type(t->get_type());
+
+    sql_print_information("MDL ticket[]: namespace=%d, db=%s, name=%s, column=%s, type=%d, duration=%d",
+      t->get_key()->mdl_namespace(), t->get_key()->db_name(), t->get_key()->name(), t->get_key()->col_name(), t->get_type(), duration);
+  }
+}
+
+void spectrum_thread_fill_mdl_list(THD *thd, spectrum::Thread *spectrum_thread) {
+  spectrum_thread_fill_mdl_list_for_duration(thd, spectrum_thread, enum_mdl_duration::MDL_TRANSACTION);
+  spectrum_thread_fill_mdl_list_for_duration(thd, spectrum_thread, enum_mdl_duration::MDL_STATEMENT);
+}
+
+int spectrum_write_row(THD *thd, TABLE *table, uchar *record) {
+  spectrum::WriteRowRequest request;
+  spectrum::WriteRowResponse response;
+  grpc::ClientContext context;
+  char value_buffer[1024];
+  String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
+
+  if (!is_spectrum_compute_node()) {
+    return 1;
+  }
+  
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64000", grpc::InsecureChannelCredentials());
+  std::unique_ptr<spectrum::StorageNode::Stub> storage_node_stub = spectrum::StorageNode::NewStub(channel);
+
+  spectrum_thread_fill_mdl_list(thd, request.mutable_thread());
+  request.set_table(table->s->table_name.str);
+  request.set_database(table->s->db.str);
+  request.set_autoinc_field_has_explicit_non_null_value(table->autoinc_field_has_explicit_non_null_value);
+
+  spectrum::Row* spectrum_row = request.mutable_row();
+  for (Field **field = table->field; *field; field++) {
+    spectrum::Field *spectrum_field = spectrum_row->add_fields();
+    spectrum_field->set_name((*field)->field_name);
+    if (!(*field)->is_null()) {
+      (*field)->val_str(&value, &value);
+      spectrum_field->set_value(value.c_ptr());
+    } else {
+      spectrum_field->set_is_null(true);
+    }
+  }
+
+  grpc::Status status = storage_node_stub.get()->WriteRow(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_write_row[%s]: error=%s", table->s->table_name.str, status.error_message().c_str());
+    return 2;
+  }
+
+  table->file->insert_id_for_cur_row = response.insert_id();
+  return 0;
+}
+
 /** Stores a row in an InnoDB database, to the table specified in this
  handle.
  @return error code */
@@ -8983,8 +9076,14 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
 
   DBUG_TRACE;
 
+  sql_print_row("write_row", table);
+
   /* Increase the write count of handler */
   ha_statistic_increment(&System_status_var::ha_write_count);
+
+  if (!spectrum_write_row(m_user_thd, table, record)) {
+    return 0;
+  }
 
   if (m_prebuilt->table->is_intrinsic()) {
     return intrinsic_table_write_row(record);
@@ -9026,7 +9125,7 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
     /* Reset the error code before calling
     innobase_get_auto_increment(). */
     m_prebuilt->autoinc_error = DB_SUCCESS;
-
+    
     error_result = update_auto_increment();
     if (error_result) {
       /* We don't want to mask autoinc overflow errors. */
@@ -9737,6 +9836,12 @@ int ha_innobase::update_row(const uchar *old_row, uchar *new_row) {
 
   DBUG_TRACE;
 
+  sql_print_row("update_row", table);
+
+  if (!spectrum_write_row(m_user_thd, table, new_row)) {
+    return 0;
+  }
+
   ut_a(m_prebuilt->trx == trx);
 
   if (high_level_read_only && !m_prebuilt->table->is_intrinsic()) {
@@ -10331,6 +10436,8 @@ int ha_innobase::index_read(
       break;
   }
 
+  //sql_print_row("index_read", table);
+
   return error;
 }
 
@@ -10345,7 +10452,9 @@ int ha_innobase::index_read_last(
     uint key_len)         /*!< in: length of the key val or prefix
                           in bytes */
 {
-  return (index_read(buf, key_ptr, key_len, HA_READ_PREFIX_LAST));
+  int error = (index_read(buf, key_ptr, key_len, HA_READ_PREFIX_LAST));
+  //sql_print_row("index_read_last", table);
+  return error;
 }
 
 /** Get the index for a handle. Does not change active index.
@@ -10821,6 +10930,8 @@ int ha_innobase::rnd_next(uchar *buf) /*!< in/out: returns the row in this
   } else {
     error = general_fetch(buf, ROW_SEL_NEXT, 0);
   }
+
+  //("rnd_next", table);
 
   return error;
 }
@@ -15054,6 +15165,29 @@ bool ha_innobase::get_se_private_data(dd::Table *dd_table, bool reset) {
   return false;
 }
 
+int spectrum_create_table(THD *thd, TABLE *table) {
+  spectrum::CreateTableRequest request;
+  spectrum::CreateTableResponse response;
+  grpc::ClientContext context;
+
+  if (!is_spectrum_compute_node()) {
+    return 1;
+  }
+  
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64000", grpc::InsecureChannelCredentials());
+  std::unique_ptr<spectrum::StorageNode::Stub> storage_node_stub = spectrum::StorageNode::NewStub(channel);
+
+  spectrum_thread_fill_mdl_list(thd, request.mutable_thread());
+  request.set_database(table->s->db.str);
+  request.set_table(table->s->table_name.str);
+  grpc::Status status = storage_node_stub.get()->CreateTable(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_create_table[%s:%s]: error=%s",
+        request.database().c_str(), request.table().c_str(), status.error_message().c_str());
+  }
+  return 0;
+}
+
 /** Create an InnoDB table.
 @param[in]      name            table name in filename-safe encoding
 @param[in]      form            table structure
@@ -15067,6 +15201,10 @@ int ha_innobase::create(const char *name, TABLE *form,
                         HA_CREATE_INFO *create_info, dd::Table *table_def) {
   THD *thd = ha_thd();
 
+  sql_print_information("create[%s:%s]", form->s->db.str, form->s->table_name.str);
+  
+  spectrum_create_table(thd, form);
+  
   if (thd_sql_command(thd) == SQLCOM_TRUNCATE) {
     return (truncate_impl(name, form, table_def));
   }
@@ -15082,9 +15220,12 @@ int ha_innobase::create(const char *name, TABLE *form,
   dict_sys mutex protection, and could be changed while creating the
   table. So we read the current value here and make all further
   decisions based on this. */
-  return (innobase_basic_ddl::create_impl(ha_thd(), name, form, create_info,
+  int error = (innobase_basic_ddl::create_impl(ha_thd(), name, form, create_info,
                                           table_def, srv_file_per_table, true,
                                           false, 0, 0, nullptr));
+
+  //std::this_thread::sleep_for(std::chrono::milliseconds(100000));
+  return error;
 }
 
 /** Discards or imports an InnoDB tablespace.

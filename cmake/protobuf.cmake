@@ -119,7 +119,13 @@ MACRO(MYSQL_CHECK_PROTOBUF)
   IF(WITH_PROTOBUF STREQUAL "bundled")
     MYSQL_USE_BUNDLED_PROTOBUF()
   ELSE()
+    FIND_PACKAGE(OpenSSL REQUIRED)
+    SET(CMAKE_PREFIX_PATH /Users/gupeng/gRPC)
+    FIND_PACKAGE(absl REQUIRED)
+    FIND_PACKAGE(utf8_range REQUIRED)
     FIND_PACKAGE(Protobuf)
+    FIND_PACKAGE(gRPC CONFIG REQUIRED)
+    include_directories(${Protobuf_INCLUDE_DIRS})
   ENDIF()
 
   IF(NOT PROTOBUF_FOUND)
@@ -166,6 +172,7 @@ MACRO(MYSQL_CHECK_PROTOBUF)
       INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${Protobuf_INCLUDE_DIR}")
     SET_TARGET_PROPERTIES(ext::libprotoc PROPERTIES
       IMPORTED_LOCATION "${Protobuf_PROTOC_LIBRARY}")
+    
   ENDIF()
 
   FIND_PROTOBUF_VERSION()
@@ -179,10 +186,16 @@ MACRO(MYSQL_CHECK_PROTOBUF)
     SET_TARGET_PROPERTIES(ext::libprotobuf PROPERTIES
       INTERFACE_LINK_LIBRARIES "${protobuf_dependencies}"
       )
+    set_property(TARGET ext::libprotobuf APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES utf8_range::utf8_range utf8_range::utf8_validity absl::log absl::flags absl::flags_parse absl::check absl::statusor
+      )
     FIND_OBJECT_DEPENDENCIES("${PROTOBUF_LITE_LIBRARY}" lite_dependencies)
     LIST(FILTER lite_dependencies  INCLUDE REGEX "${HOMEBREW_HOME}.*")
     SET_TARGET_PROPERTIES(ext::libprotobuf-lite PROPERTIES
       INTERFACE_LINK_LIBRARIES "${lite_dependencies}"
+      )
+    set_property(TARGET ext::libprotobuf-lite APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES utf8_range::utf8_range utf8_range::utf8_validity absl::log absl::flags absl::flags_parse absl::check absl::statusor
       )
     FIND_OBJECT_DEPENDENCIES("${Protobuf_PROTOC_LIBRARY}" protoc_dependencies)
     LIST(FILTER protoc_dependencies INCLUDE REGEX "${HOMEBREW_HOME}.*")

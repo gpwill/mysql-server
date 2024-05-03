@@ -1,0 +1,160 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "org.spectrum.grpc";
+option java_outer_classname = "HelloWorldProto";
+option objc_class_prefix = "HLW";
+
+package spectrum;
+
+service HeadNode {
+  rpc Propose (DataItemMessage) returns (DataItemMessage) {}
+}
+
+service StorageNode {
+  rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
+  rpc WriteRow(WriteRowRequest) returns (WriteRowResponse) {} 
+  rpc UpdateRow(WriteRowRequest) returns (WriteRowResponse) {} 
+  rpc CreateReplica (CreateReplicaRequestMessage) returns (CreateReplicaResponseMessage) {}
+  rpc UpdateEpoch (UpdateEpochRequestMessage) returns (UpdateEpochResponseMessage) {}
+
+  rpc Prepare (PrepareRequestMessage) returns (PrepareResponseMessage) {}
+  rpc Accept (AcceptRequestMessage) returns (AcceptResponseMessage) {}
+  rpc Abort (AbortRequestMessage) returns (AbortResponseMessage) {}
+}
+
+message Thread {
+  repeated MDL mdl_list = 1;
+}
+
+message MDL {
+  int32 namespace = 1;
+  string schema = 2;
+  string table = 3;
+  string column = 4;
+  int32 type = 5;
+}
+
+message Row {
+  repeated Field fields = 3;
+}
+
+message Field {
+  string name = 1;
+  bytes value = 2;
+  bool is_null = 3;
+}
+
+message CreateTableRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+}
+
+message CreateTableResponse {
+}
+
+message WriteRowRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  Row row = 4;
+  bool autoinc_field_has_explicit_non_null_value = 5;
+}
+
+message WriteRowResponse {
+  int64 insert_id = 1;
+}
+
+message UpdateRowRequest {
+  string database = 1;
+  string table = 2;
+  Row row = 3;
+  bool autoinc_field_has_explicit_non_null_value = 4;
+}
+
+message UpdateRowResponse {
+}
+
+
+
+
+
+
+
+
+
+
+
+
+message CreateReplicaRequestMessage {
+  string namespace = 1;
+  int32 replicaId = 2;
+}
+
+message CreateReplicaResponseMessage {
+  string acceptorId = 1;
+}
+
+message UpdateEpochRequestMessage {
+  string namespace = 1;
+  int32 replicaId = 2;
+  int64 epoch = 3;
+}
+
+message UpdateEpochResponseMessage {
+  int64 epoch = 1;
+}
+
+message DataItemMessage {
+  string namespace = 1;
+  string key = 2;
+  optional string value = 3;
+  optional bool isNext = 4;
+  int64 version = 5;
+}
+
+message ProposalMessage {
+  string key = 1;
+  optional string value = 2;
+  optional bool isNext = 3;
+  int64 version = 4;
+  int64 sequenceNumber = 5;
+  optional ProposalMessage parentProposal = 6;
+}
+
+message PrepareRequestMessage {
+  string acceptorId = 1;
+  int64 epoch = 2;
+  ProposalMessage proposal = 3;
+}
+
+message PrepareResponseMessage {
+  bool prepared = 1;
+  ProposalMessage preparedProposal = 2;
+  ProposalMessage acceptedProposal = 3;
+  int64 epoch = 4;
+  int64 maxSequenceNumber = 5;
+}
+
+message AcceptRequestMessage {
+  string acceptorId = 1;
+  int64 epoch = 2;
+  ProposalMessage proposal = 3;
+}
+
+message AcceptResponseMessage {
+  bool accepted = 1;
+  ProposalMessage preparedProposal = 2;
+  ProposalMessage acceptedProposal = 3;
+  int64 epoch = 4;
+  int64 maxSequenceNumber = 5;
+}
+
+message AbortRequestMessage {
+  string acceptorId = 1;
+  ProposalMessage proposal = 2;
+}
+
+message AbortResponseMessage {
+}
