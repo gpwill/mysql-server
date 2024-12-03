@@ -67,6 +67,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql_table.h>
 #include "mysql/components/services/system_variable_source.h"
 
+#include <spectrum.h>
+
 #ifndef UNIV_HOTBACKUP
 #include <current_thd.h>
 #include <debug_sync.h>
@@ -9001,6 +9003,8 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
   /* Increase the write count of handler */
   ha_statistic_increment(&System_status_var::ha_write_count);
 
+  spectrum_compute_write_row(m_user_thd, table, record);
+
   if (m_prebuilt->table->is_intrinsic()) {
     return intrinsic_table_write_row(record);
   }
@@ -15087,6 +15091,8 @@ int ha_innobase::create(const char *name, TABLE *form,
   }
 
   trx_t *trx = check_trx_exists(thd);
+
+  spectrum_compute_create_table(thd, form);
 
   if (!(create_info->options & HA_LEX_CREATE_TMP_TABLE)) {
     innobase_register_trx(ht, thd, trx);

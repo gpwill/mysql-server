@@ -48,6 +48,7 @@ ENDIF()
 INCLUDE_DIRECTORIES(
   ${CMAKE_SOURCE_DIR}/sql
   ${CMAKE_SOURCE_DIR}/sql/auth
+  ${CMAKE_SOURCE_DIR}/libspectrum/include
 )
 
 # Conflicting YYSTYPE, because we have multiple Bison grammars.
@@ -342,7 +343,7 @@ MYSQL_ADD_PLUGIN(innobase
   MANDATORY
   MODULE_OUTPUT_NAME ha_innodb
   LINK_LIBRARIES sql_dd sql_gis ext::zlib ext::lz4 ${NUMA_LIBRARY}
-                 extra::rapidjson)
+                 extra::rapidjson spectrum_compute)
 
 # On linux: /usr/include/stdio.h:#define BUFSIZ 8192
 # On Solaris: /usr/include/iso/stdio_iso.h:#define    BUFSIZ  1024

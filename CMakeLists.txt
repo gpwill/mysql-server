@@ -2217,6 +2217,7 @@ ADD_SUBDIRECTORY(libmysql)
 ADD_SUBDIRECTORY(libbinlogevents)
 ADD_SUBDIRECTORY(libbinlogstandalone)
 ADD_SUBDIRECTORY(libchangestreams)
+ADD_SUBDIRECTORY(libspectrum)
 ADD_SUBDIRECTORY(sql-common/oci)
 
 IF(NOT WITHOUT_SERVER)

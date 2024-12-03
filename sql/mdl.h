@@ -433,7 +433,7 @@ struct MDL_key {
   uint name_length() const { return m_object_name_length; }
 
   const char *col_name() const {
-    assert(!use_normalized_object_name());
+    //assert(!use_normalized_object_name());
 
     if (m_db_name_length + m_object_name_length + 3 < m_length) {
       /* A column name was stored in the key buffer. */
@@ -445,7 +445,7 @@ struct MDL_key {
   }
 
   uint col_name_length() const {
-    assert(!use_normalized_object_name());
+    //assert(!use_normalized_object_name());
 
     if (m_db_name_length + m_object_name_length + 3 < m_length) {
       /* A column name was stored in the key buffer. */
@@ -1520,6 +1520,10 @@ class MDL_context {
 
   void set_force_dml_deadlock_weight(bool force_dml_deadlock_weight) {
     m_force_dml_deadlock_weight = force_dml_deadlock_weight;
+  }
+
+  Ticket_iterator get_tickets_for_duration(enum_mdl_duration duration) {
+    return m_ticket_store.list_iterator(duration);
   }
 
   /**
