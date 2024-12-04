@@ -4752,6 +4752,14 @@ class handler {
   int ha_index_or_rnd_end() {
     return inited == INDEX ? ha_index_end() : inited == RND ? ha_rnd_end() : 0;
   }
+
+  int ha_index_read(uchar *buf,
+                    const uchar *key,
+                    uint key_len,
+                    enum ha_rkey_function find_flag) {
+    return index_read(buf, key, key_len, find_flag);
+  }
+
   /**
     The cached_table_flags is set at ha_open and ha_external_lock
   */

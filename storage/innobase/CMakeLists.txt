@@ -49,6 +49,7 @@ INCLUDE_DIRECTORIES(
   ${CMAKE_SOURCE_DIR}/sql
   ${CMAKE_SOURCE_DIR}/sql/auth
   ${CMAKE_SOURCE_DIR}/libspectrum/include
+  ${CMAKE_BINARY_DIR}/libspectrum/generated/protobuf
 )
 
 # Conflicting YYSTYPE, because we have multiple Bison grammars.

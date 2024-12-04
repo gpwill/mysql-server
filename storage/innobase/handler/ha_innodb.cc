@@ -10053,6 +10053,8 @@ int ha_innobase::index_init(uint keynr, /*!< in: key (index) number */
 {
   DBUG_TRACE;
 
+  spectrum_compute_init_index(m_user_thd, table, keynr);
+
   return change_active_index(keynr);
 }
 
@@ -10061,6 +10063,8 @@ int ha_innobase::index_init(uint keynr, /*!< in: key (index) number */
 
 int ha_innobase::index_end(void) {
   DBUG_TRACE;
+
+  spectrum_compute_end_index(m_user_thd, table);
 
   if (m_prebuilt->index->last_sel_cur) {
     m_prebuilt->index->last_sel_cur->release();
@@ -10187,6 +10191,8 @@ int ha_innobase::index_read(
 
   ut_a(m_prebuilt->trx == thd_to_trx(m_user_thd));
   ut_ad(key_len != 0 || find_flag != HA_READ_KEY_EXACT);
+
+  spectrum_compute_read_row(m_user_thd, table, active_index, buf, key_ptr, key_len, find_flag);
 
   ha_statistic_increment(&System_status_var::ha_read_key_count);
 
@@ -10606,6 +10612,8 @@ int ha_innobase::index_next(uchar *buf) /*!< in/out: buffer for next row in
 {
   ha_statistic_increment(&System_status_var::ha_read_next_count);
 
+  spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, false);
+
   return (general_fetch(buf, ROW_SEL_NEXT, 0));
 }
 
@@ -10618,6 +10626,8 @@ int ha_innobase::index_next_same(uchar *buf, /*!< in/out: buffer for the row */
 {
   ha_statistic_increment(&System_status_var::ha_read_next_count);
 
+  spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, true);
+
   return (general_fetch(buf, ROW_SEL_NEXT, m_last_match_mode));
 }
 
@@ -10629,6 +10639,8 @@ int ha_innobase::index_prev(
     uchar *buf) /*!< in/out: buffer for previous row in MySQL format */
 {
   ha_statistic_increment(&System_status_var::ha_read_prev_count);
+  
+  spectrum_compute_read_prev_row(m_user_thd, table, active_index, buf);
 
   return (general_fetch(buf, ROW_SEL_PREV, 0));
 }
@@ -10798,6 +10810,8 @@ int ha_innobase::rnd_init(bool scan) {
   assert(table_share->is_missing_primary_key() ==
          (bool)m_prebuilt->clust_index_was_generated);
 
+  spectrum_compute_init_rnd(m_user_thd, table, scan);
+
   int err = change_active_index(table_share->primary_key);
 
   /* Don't use semi-consistent read in random row reads (by position).
@@ -10840,6 +10854,8 @@ int ha_innobase::rnd_next(uchar *buf) /*!< in/out: returns the row in this
 
     m_start_of_scan = false;
   } else {
+    spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, false);
+
     error = general_fetch(buf, ROW_SEL_NEXT, 0);
   }
 
@@ -18614,6 +18630,12 @@ int ha_innobase::external_lock(THD *thd, /*!< in: handle to the user thread */
   DBUG_PRINT("enter", ("lock_type: %d", lock_type));
 
   update_thd(thd);
+
+  if (lock_type == F_UNLCK) {
+    spectrum_compute_unlock_table(m_user_thd, table);
+  } else {
+    spectrum_compute_lock_table(m_user_thd, table);
+  }
 
   trx_t *trx = m_prebuilt->trx;
 

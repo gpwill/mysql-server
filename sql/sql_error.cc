@@ -437,6 +437,8 @@ void Diagnostics_area::set_error_status(uint mysql_errno,
   // sqlstate must be set properly by the caller.
   assert(returned_sqlstate);
 
+  sql_print_error("Error: %d %s", mysql_errno, message_text);
+
 #ifdef NDEBUG
   /*
     In production, refuse to overwrite a custom response with an

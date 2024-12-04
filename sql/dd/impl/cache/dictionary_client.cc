@@ -1397,6 +1397,57 @@ bool Dictionary_client::acquire(const String_type &schema_name,
 }
 
 template <typename T>
+bool Dictionary_client::reload_uncommitted(const String_type &schema_name,
+                                           const String_type &object_name,
+                                           const T **object) {
+  // We must make sure the schema is released and unlocked in the right order.
+  Schema_MDL_locker mdl_locker(m_thd);
+  Auto_releaser releaser(this);
+
+  assert(object);
+  *object = nullptr;
+
+  // Get the schema object by name.
+  const Schema *schema = nullptr;
+  bool error = mdl_locker.ensure_locked(schema_name.c_str()) ||
+               acquire(schema_name, &schema);
+
+  // If there was an error, or if we found no valid schema, return here.
+  if (error) {
+    assert(m_thd->is_error() || m_thd->killed);
+    return true;
+  }
+
+  // A non existing schema is not reported as an error.
+  if (!schema) return false;
+
+  // Create the name key for the object.
+  typename T::Name_key key;
+  T::update_name_key(&key, schema->id(), object_name);
+
+  // Cache dictionary objects with UTC time
+  Timestamp_timezone_guard ts(m_thd);
+
+  // Read the uncached dictionary object using ISO_READ_UNCOMMITTED
+  // isolation level.
+  const typename T::Cache_partition *stored_object = nullptr;
+  error = Shared_dictionary_cache::instance()->get_uncached(
+      m_thd, key, ISO_READ_UNCOMMITTED, &stored_object);
+  if (!error) {
+    // Here, stored_object is a newly created instance, so we do not need to
+    // clone() it, but we must delete it if dynamic cast fails.
+    *object = const_cast<T *>(dynamic_cast<const T *>(stored_object));
+    if (stored_object && !*object) delete stored_object;
+    if (*object) {
+      register_uncommitted_object(*object);
+    }
+  } else
+    assert(m_thd->is_error() || m_thd->killed);
+
+  return error;
+}
+
+template <typename T>
 bool Dictionary_client::acquire_for_modification(const String_type &schema_name,
                                                  const String_type &object_name,
                                                  T **object) {
@@ -3037,6 +3088,9 @@ template bool Dictionary_client::acquire_uncached(Object_id, Abstract_table **);
 template bool Dictionary_client::acquire(const String_type &,
                                          const String_type &,
                                          const Abstract_table **);
+template bool Dictionary_client::reload_uncommitted(const String_type &,
+                                                    const String_type &,
+                                                    const Abstract_table **);
 template bool Dictionary_client::acquire_for_modification(const String_type &,
                                                           const String_type &,
                                                           Abstract_table **);

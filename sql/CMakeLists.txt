@@ -21,7 +21,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
-INCLUDE_DIRECTORIES(SYSTEM ${BOOST_PATCHES_DIR} ${BOOST_INCLUDE_DIR})
+INCLUDE_DIRECTORIES(SYSTEM ${BOOST_PATCHES_DIR} ${BOOST_INCLUDE_DIR}
+  ${CMAKE_SOURCE_DIR}/libspectrum/include
+  ${CMAKE_BINARY_DIR}/libspectrum/generated/protobuf
+)
 
 ADD_WSHADOW_WARNING()
 

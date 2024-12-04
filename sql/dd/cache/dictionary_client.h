@@ -688,6 +688,22 @@ class Dictionary_client {
                              const String_type &object_name, const T **object);
 
   /**
+    Reload an uncommitted object from storage and put it to uncommitted cache
+
+    @tparam       T             Dictionary object type.
+    @param        schema_name   Name of the schema containing the object.
+    @param        object_name   Name of the object.
+    @param [out]  object        Dictionary object, if present; otherwise NULL.
+
+    @retval       false   No error.
+    @retval       true    Error
+  */
+
+  template <typename T>
+  [[nodiscard]] bool reload_uncommitted(const String_type &schema_name,
+                                        const String_type &object_name, const T **object);
+
+  /**
     Retrieve an object by its schema- and object name.
 
     This function returns a cloned object that can be modified.

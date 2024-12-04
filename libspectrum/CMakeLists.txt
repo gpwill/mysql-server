@@ -43,6 +43,7 @@ TARGET_LINK_LIBRARIES(spectrum_pb PUBLIC ext::libprotobuf grpc++_unsecure)
 
 ADD_STATIC_LIBRARY(spectrum_common
   ${SPECTRUM_BASE_SRC_DIR}/spectrum_common.cc
+  LINK_LIBRARIES spectrum_pb
 )
 
 ADD_STATIC_LIBRARY(spectrum_compute

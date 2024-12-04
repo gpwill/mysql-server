@@ -13,8 +13,20 @@ service HeadNode {
 
 service StorageNode {
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
+  rpc LockTable(LockTableRequest) returns (LockTableResponse) {}
+  rpc UnlockTable(UnlockTableRequest) returns (UnlockTableResponse) {}
+  rpc InitIndex(InitIndexRequest) returns (InitIndexResponse) {} 
+  rpc InitRnd(InitRndRequest) returns (InitRndResponse) {} 
+  rpc EndIndex(EndIndexRequest) returns (EndIndexResponse) {} 
+  rpc EndRnd(EndRndRequest) returns (EndRndResponse) {} 
+
+  rpc ReadRow(ReadRowRequest) returns (ReadRowResponse) {} 
+  rpc ReadNextRow(ReadNextRowRequest) returns (ReadNextRowResponse) {} 
+  rpc ReadPrevRow(ReadPrevRowRequest) returns (ReadPrevRowResponse) {} 
   rpc WriteRow(WriteRowRequest) returns (WriteRowResponse) {} 
   rpc UpdateRow(UpdateRowRequest) returns (UpdateRowResponse) {} 
+  rpc Commit(CommitRequest) returns (CommitResponse) {} 
+
   rpc CreateReplica (CreateReplicaRequestMessage) returns (CreateReplicaResponseMessage) {}
   rpc UpdateEpoch (UpdateEpochRequestMessage) returns (UpdateEpochResponseMessage) {}
 
@@ -23,8 +35,13 @@ service StorageNode {
   rpc Abort (AbortRequestMessage) returns (AbortResponseMessage) {}
 }
 
+message SystemVariables {
+  int64 option_bits = 1;
+}
+
 message Thread {
   repeated MDL mdl_list = 1;
+  SystemVariables system_variables = 2;
 }
 
 message MDL {
@@ -52,17 +69,126 @@ message CreateTableRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
+  int32 lock_type = 4;
 }
 
 message CreateTableResponse {
+}
+
+message LockTableRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+}
+
+message UnlockTableResponse {
+}
+
+message UnlockTableRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+}
+
+message LockTableResponse {
+}
+
+message InitIndexRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+  int32 index = 5;
+}
+
+message InitIndexResponse {
+}
+
+message EndIndexRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+}
+
+message EndIndexResponse {
+}
+
+message InitRndRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+  bool scan = 5;
+}
+
+message InitRndResponse {
+}
+
+message EndRndRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+}
+
+message EndRndResponse {
+}
+
+message ReadRowRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+  int32 index = 5;
+  bytes key = 6;
+  int32 key_len = 7;
+  int32 find_flag = 8;
+  int32 init = 9;
+  bool init_scan = 10;
+}
+
+message ReadRowResponse {
+  Row row = 1;
+}
+
+message ReadNextRowRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+  int32 index = 5;
+  int32 same = 6;
+  int32 init = 7;
+  bool init_scan = 8;
+}
+
+message ReadNextRowResponse {
+  Row row = 1;
+}
+
+message ReadPrevRowRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int32 lock_type = 4;
+  int32 index = 5;
+  int32 init = 6;
+  bool init_scan = 7;
+}
+
+message ReadPrevRowResponse {
+  Row row = 1;
 }
 
 message WriteRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  Row row = 4;
-  bool autoinc_field_has_explicit_non_null_value = 5;
+  int32 lock_type = 4;
+  Row row = 5;
+  bool autoinc_field_has_explicit_non_null_value = 6;
 }
 
 message WriteRowResponse {
@@ -73,12 +199,22 @@ message UpdateRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  Row new_row = 4;
-  Row old_row = 5;
-  bool autoinc_field_has_explicit_non_null_value = 6;
+  int32 lock_type = 4;
+  Row new_row = 5;
+  Row old_row = 6;
+  bool autoinc_field_has_explicit_non_null_value = 7;
 }
 
 message UpdateRowResponse {
+}
+
+message CommitRequest {
+  Thread thread = 1;
+  bool all = 2;
+  bool ignore_global_read_lock = 3;
+}
+
+message CommitResponse {
 }
 
 

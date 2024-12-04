@@ -23,6 +23,8 @@
 
 #include<stdlib.h>
 
+#include "spectrum.grpc.pb.h"
+
 inline bool is_spectrum_compute_node() {
   char* env = getenv("SPECTRUM_COMPUTE_NODE");
   if (env != nullptr) {
@@ -40,9 +42,25 @@ inline bool is_spectrum_storage_node() {
 }
 
 extern void spectrum_print_row(char* method, TABLE* table);
+extern void spectrum_print_row(char* method, TABLE* table, uchar* record);
+extern void spectrum_row_fill_fields(TABLE* table, ::spectrum::Row *spectrum_row);
+extern void spectrum_row_fill_fields(TABLE* table, uchar* record, ::spectrum::Row *spectrum_row);
+extern void spectrum_row_extract_fields(TABLE *table, ::spectrum::Row *spectrum_row);
+extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum::Row *spectrum_row);
 
 extern int spectrum_compute_create_table(THD *thd, TABLE *table);
+extern int spectrum_compute_lock_table(THD *thd, TABLE *table);
+extern int spectrum_compute_unlock_table(THD *thd, TABLE *table);
+extern int spectrum_compute_init_index(THD *thd, TABLE *table, uint index);
+extern int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan);
+extern int spectrum_compute_end_index(THD *thd, TABLE *table);
+extern int spectrum_compute_end_rnd(THD *thd, TABLE *table);
+extern int spectrum_compute_read_row(THD *thd, TABLE *table, uint index, uchar *buf,
+                                     const uchar *key_ptr, uint key_len, enum ha_rkey_function find_flag);
+extern int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *buf, bool same);
+extern int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *buf);
 extern int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record);
 extern int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record, uchar *new_record);
+extern int spectrum_commit(THD *thd, bool all, bool ignore_global_read_lock);
 
 #endif

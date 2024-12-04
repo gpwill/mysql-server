@@ -131,6 +131,8 @@
 #include "template_utils.h"
 #include "uniques.h"  // Unique_on_insert
 
+#include "spectrum.h"
+
 /**
   @def MYSQL_TABLE_IO_WAIT
   Instrumentation helper for table io_waits.
@@ -1616,6 +1618,8 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
     is disabled with slave SQL thread or slave worker thread.
   */
   std::tie(error, need_clear_owned_gtid) = commit_owned_gtids(thd, all);
+
+  spectrum_commit(thd, all, ignore_global_read_lock);
 
   /*
     'all' means that this is either an explicit commit issued by

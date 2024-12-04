@@ -50,6 +50,8 @@
 #include "sql/dd_table_share.h"
 #include "sql/dd/types/table.h"
 #include "sql/dd/cache/dictionary_client.h"
+#include "sql/dd/dd_schema.h"
+#include "sql/dd/impl/cache/shared_dictionary_cache.h" 
 
 #include <spectrum.h>
 #include <grpc/grpc.h>
@@ -76,33 +78,31 @@ static void init_deamon_example_psi_keys() {
 
 #define HEART_STRING_BUFFER 100
 
+THD *current_thread = nullptr;
+
 THD *handler_create_thd(const spectrum::Thread &spectrum_thread)
 {
-  THD *thd;
   MDL_request_list mdl_requests;
 
   my_thread_init();
 
-  thd = new (std::nothrow) THD;
-  if (!thd) {
-    return (NULL);
+  if (!current_thread) {
+    sql_print_information("Creating new thread"); 
+
+    current_thread = new (std::nothrow) THD;
+
+    current_thread->get_protocol_classic()->init_net((Vio *)0);
+    current_thread->set_new_thread_id();
+    current_thread->thread_stack = reinterpret_cast<char *>(&current_thread);
   }
+  current_thread->store_globals();
+  current_thread->variables.option_bits = spectrum_thread.system_variables().option_bits();
 
-  thd->get_protocol_classic()->init_net((Vio *)0);
-  thd->set_new_thread_id();
-  thd->thread_stack = reinterpret_cast<char *>(&thd);
-  thd->store_globals();
-
-  // Disable auto commit
-  thd->variables.option_bits |= OPTION_NOT_AUTOCOMMIT;
-  thd->variables.option_bits &= ~OPTION_AUTOCOMMIT;
-
-  sql_print_information("MDL: acquiring"); 
   for (unsigned int i = 0; i < spectrum_thread.mdl_list().size(); i++) {
     spectrum::MDL mdl = spectrum_thread.mdl_list()[i];   
     
-    sql_print_information("MDL: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d",
-      mdl.namespace_(), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str(), mdl.type(), mdl.duration()); 
+    //sql_print_information("MDL: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d",
+    //  mdl.namespace_(), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str(), mdl.type(), mdl.duration()); 
     
     MDL_key mdl_key;
     if (mdl.column().length()) {
@@ -113,9 +113,10 @@ THD *handler_create_thd(const spectrum::Thread &spectrum_thread)
 
     MDL_request mdl_request;
     MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, static_cast<enum_mdl_type>(mdl.type()), static_cast<enum_mdl_duration>(mdl.duration()));
-    thd->mdl_context.acquire_lock(&mdl_request, 10000);
+    current_thread->mdl_context.acquire_lock(&mdl_request, 10000);
   }
-  return (thd);
+
+  return (current_thread);
 }
 
 TABLE *handler_open_table(
@@ -126,58 +127,47 @@ TABLE *handler_open_table(
   Open_table_context table_ctx(thd, 0);
   thr_lock_type lock_mode = TL_WRITE;
 
+  for (TABLE *t = thd->open_tables; t; t = t->next) {
+    if (!strcmp(t->s->db.str, db_name) && !strcmp(t->s->table_name.str, table_name)) {
+      return t;
+    }
+  }
+
   Table_ref tables(db_name, strlen(db_name), table_name, strlen(table_name),
                    table_name, lock_mode);
   if (!open_table(thd, &tables, &table_ctx)) {
     TABLE *table = tables.table;
     table->use_all_columns();
-    sql_print_information("handler_open_table[%s:%s]: success", db_name, table_name);
     return table;
   }
   return NULL;
-}
-
-void handler_store_fields(TABLE *table, ::spectrum::Row *spectrum_row) {
-  memset(table->record[0], 0, table->s->null_bytes);
-  for (unsigned int i = 0; i < spectrum_row->fields().size(); i++) {
-    Field *field = table->field[i];
-    ::spectrum::Field spectrum_field = spectrum_row->fields()[i];
-    if (!spectrum_field.is_null()) {
-      std::string value = spectrum_field.value();
-      field->store(value.c_str(), value.length(), &my_charset_bin);
-    } else {
-      field->set_null();
-    }
-  }
 }
 
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
-      int error;
+      bool error;
+      int error_code;
       const dd::Table *table_def = nullptr;
       dd::Table *table_def_clone;
       TABLE_SHARE table_share;
       char table_filepath[FN_REFLEN + 1];
       HA_CREATE_INFO create_info;
       MDL_request_list mdl_requests;
+      dd::Table::Name_key table_name_kay;
+      const dd::Table::Cache_partition *stored_object = nullptr;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
 
+      sql_print_information("CreateTable[%s]", table_name);
+
       thd = handler_create_thd(request->thread());
-      // Request metadata lock on schema and table
-      //MDL_request schema_mdl_request;
-      //MDL_REQUEST_INIT(&schema_mdl_request, MDL_key::SCHEMA, db_name, "", MDL_EXCLUSIVE, MDL_TRANSACTION);
-      //mdl_requests.push_front(&schema_mdl_request);
-      //MDL_request table_mdl_request;
-      //MDL_REQUEST_INIT(&table_mdl_request, MDL_key::TABLE, db_name, table_name, MDL_EXCLUSIVE, MDL_TRANSACTION);
-      //mdl_requests.push_front(&table_mdl_request);
-      //thd->mdl_context.acquire_locks(&mdl_requests, 10000);
 
       // Retrive table definition
       dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
-      thd->dd_client()->acquire(db_name, table_name, &table_def);
+      thd->dd_client()->reload_uncommitted(db_name, table_name, (const dd::Abstract_table **)&table_def);
+      //thd->dd_client()->acquire(db_name, table_name, &table_def);
       if (table_def == nullptr) {
         sql_print_error("CreateTable[%s:%s]: can not find table definition", db_name, table_name);
         goto end;
@@ -185,8 +175,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       table_def_clone = table_def->clone();
       build_table_filename(table_filepath, sizeof(table_filepath) - 1, db_name, table_name, "", 0);      
-      error = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def_clone);
-      if (error) {
+      error_code = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def_clone);
+      if (error_code) {
         sql_print_error("CreateTable[%s:%s]: can not create table in ha, error=%d", db_name, table_name, error);
         goto end;
       }
@@ -195,9 +185,149 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       thd->lex->sql_command = SQLCOM_CREATE_TABLE;
       handlerton *db_type = get_viable_handlerton_for_create(thd, table_name, create_info);
       thd->m_transactional_ddl.init(db_name, table_name, db_type);
-      trans_commit_stmt(thd, false);
-      trans_commit(thd, false);
-      thd->mdl_context.release_transactional_locks();
+      return grpc::Status::OK; 
+    }
+
+     ::grpc::Status LockTable(::grpc::ServerContext* context, const ::spectrum::LockTableRequest* request, ::spectrum::LockTableResponse* response) {
+      THD *thd;
+      TABLE *table;
+      const char* db_name = request->database().c_str();
+      const char* table_name = request->table().c_str();
+      thr_lock_type lock_type = (thr_lock_type)request->lock_type();
+
+      sql_print_information("LockTable[%s]: lock_type=%d", table_name, lock_type);
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, db_name, table_name);
+
+      table->reginfo.lock_type = lock_type;
+      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status UnlockTable(::grpc::ServerContext* context, const ::spectrum::UnlockTableRequest* request, ::spectrum::UnlockTableResponse* response) {
+      THD *thd;
+      TABLE *table;
+      const char* db_name = request->database().c_str();
+      const char* table_name = request->table().c_str();
+
+      sql_print_information("UnLockTable[%s]", table_name);
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, db_name, table_name);
+
+      mysql_unlock_some_tables(thd, &table, 1);
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status InitIndex(::grpc::ServerContext* context, const ::spectrum::InitIndexRequest* request, ::spectrum::InitIndexResponse* response) {
+      THD *thd;
+      TABLE *table;
+
+      sql_print_information("InitIndex[%s]: index=%d", request->table().c_str(), request->index());
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+
+      table->file->ha_index_init(request->index(), true);
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status InitRnd(::grpc::ServerContext* context, const ::spectrum::InitRndRequest* request, ::spectrum::InitRndResponse* response) {
+      THD *thd;
+      TABLE *table;
+
+      sql_print_information("InitRnd[%s]: scan=%d", request->table().c_str(), request->scan());
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+
+      table->file->ha_rnd_init(request->scan());
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status EndIndex(::grpc::ServerContext* context, const ::spectrum::EndIndexRequest* request, ::spectrum::EndIndexResponse* response) {
+      THD *thd;
+      TABLE *table;
+
+      sql_print_information("EndIndex[%s]", request->table().c_str());
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+
+      if (table->file->inited == handler::RND) {
+        table->file->ha_rnd_end();
+      } else if (table->file->inited == handler::INDEX) {
+        table->file->ha_index_end();
+      }
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status ReadRow(::grpc::ServerContext* context, const ::spectrum::ReadRowRequest* request, ::spectrum::ReadRowResponse* response) {
+      THD *thd;
+      TABLE *table;
+      const uchar *key = nullptr;
+      uint key_len = request->key_len();
+      enum ha_rkey_function find_flags = (enum ha_rkey_function)request->find_flag();
+
+      if (key_len) {
+        key = (const uchar *)request->key().data();
+      }
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+      empty_record(table);
+      
+      table->file->ha_index_read(table->record[0], key, key_len, find_flags);
+
+      spectrum_print_row("ReadRow", table);
+      spectrum_row_fill_fields(table, response->mutable_row());
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status ReadNextRow(::grpc::ServerContext* context, const ::spectrum::ReadNextRowRequest* request, ::spectrum::ReadNextRowResponse* response) {
+      THD *thd;
+      TABLE *table;
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+      empty_record(table);
+
+      if (table->file->inited == handler::RND) {
+        table->file->ha_rnd_next(table->record[0]);
+      } else if (table->file->inited == handler::INDEX) {
+        if (request->same()) {
+          table->file->ha_index_next_same(table->record[0], nullptr, 0);
+        } else {
+          table->file->ha_index_next(table->record[0]);
+        }
+      }
+
+      spectrum_print_row("ReadNextRow", table);
+      spectrum_row_fill_fields(table, response->mutable_row());
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status ReadPrevRow(::grpc::ServerContext* context, const ::spectrum::ReadPrevRowRequest* request, ::spectrum::ReadPrevRowResponse* response) {
+      THD *thd;
+      TABLE *table;
+
+      thd = handler_create_thd(request->thread());
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+      empty_record(table);
+
+      table->file->ha_index_prev(table->record[0]);
+
+      spectrum_print_row("ReadPrevRow", table);
+      spectrum_row_fill_fields(table, response->mutable_row());
+
       return grpc::Status::OK; 
     }
 
@@ -205,34 +335,24 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd;
       TABLE *table;
 
-      sql_print_information("WriteRow[%s] Start", request->table().c_str());
-
       thd = handler_create_thd(request->thread());
-
       table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
       empty_record(table);
+      
       table->autoinc_field_has_explicit_non_null_value = request->autoinc_field_has_explicit_non_null_value();
 
       ::spectrum::Row spectrum_row = request->row();
-      handler_store_fields(table, &spectrum_row);
+      spectrum_row_extract_fields(table, &spectrum_row);
       spectrum_print_row("WriteRow", table);
 
       // For autoincr field to work
       table->next_number_field = table->found_next_number_field;
-      table->reginfo.lock_type = thr_lock_type::TL_WRITE;
-
-      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
 
       table->file->ha_write_row(table->record[0]);
       response->set_insert_id(table->file->insert_id_for_cur_row);
 
       table->file->ha_release_auto_increment();
 
-      mysql_unlock_tables(thd, thd->lock);
-
-      trans_commit_stmt(thd, false);
-      trans_commit(thd, false);
-      thd->mdl_context.release_transactional_locks();
       return grpc::Status::OK; 
     }
 
@@ -240,36 +360,46 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd;
       TABLE *table;
 
-      sql_print_information("UpdateRow[%s] Start", request->table().c_str());
-
       thd = handler_create_thd(request->thread());
-
       table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
       empty_record(table);
       table->autoinc_field_has_explicit_non_null_value = request->autoinc_field_has_explicit_non_null_value();
 
       ::spectrum::Row spectrum_old_row = request->old_row();
-      handler_store_fields(table, &spectrum_old_row);
+      spectrum_row_extract_fields(table, &spectrum_old_row);
       store_record(table, record[1]);
       ::spectrum::Row spectrum_new_row = request->new_row();
-      handler_store_fields(table, &spectrum_new_row);
+      spectrum_row_extract_fields(table, &spectrum_new_row);
       spectrum_print_row("UpdateRow", table);
 
       // For autoincr field to work
       table->next_number_field = table->found_next_number_field;
-      table->reginfo.lock_type = thr_lock_type::TL_WRITE;
-
-      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
 
       table->file->ha_update_row(table->record[1], table->record[0]);
-
       table->file->ha_release_auto_increment();
 
-      mysql_unlock_tables(thd, thd->lock);
+      return grpc::Status::OK; 
+    }
 
-      trans_commit_stmt(thd, false);
-      trans_commit(thd, false);
-      thd->mdl_context.release_transactional_locks();
+    ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
+      THD *thd;
+
+      sql_print_information("Commit: all=%d, ignore_global_read_lock=%d", request->all(), request->ignore_global_read_lock());
+
+      thd = handler_create_thd(request->thread());
+
+      // Disable 2pc commit
+      Transaction_ctx *trn_ctx = thd->get_transaction();
+      trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::SESSION, true);
+      trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::STMT, true);
+      
+      if (request->all()) {
+        trans_commit(thd, false);
+        thd->mdl_context.release_transactional_locks();
+      } else {
+        trans_commit_stmt(thd, false);
+        mysql_unlock_tables(thd, thd->lock);
+      }
       return grpc::Status::OK; 
     }
 
