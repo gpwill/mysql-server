@@ -41,7 +41,11 @@ MYSQL_PROTOBUF_GENERATE_CPP_LIBRARY(
 )
 TARGET_LINK_LIBRARIES(spectrum_pb PUBLIC ext::libprotobuf grpc++_unsecure)
 
+ADD_STATIC_LIBRARY(spectrum_common
+  ${SPECTRUM_BASE_SRC_DIR}/spectrum_common.cc
+)
+
 ADD_STATIC_LIBRARY(spectrum_compute
   ${SPECTRUM_BASE_SRC_DIR}/spectrum_compute.cc
-  LINK_LIBRARIES spectrum_pb
+  LINK_LIBRARIES spectrum_pb spectrum_common
 )

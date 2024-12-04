@@ -39,7 +39,10 @@ inline bool is_spectrum_storage_node() {
   return false;
 }
 
+extern void spectrum_print_row(char* method, TABLE* table);
+
 extern int spectrum_compute_create_table(THD *thd, TABLE *table);
 extern int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record);
+extern int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record, uchar *new_record);
 
 #endif

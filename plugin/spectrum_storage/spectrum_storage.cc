@@ -137,6 +137,20 @@ TABLE *handler_open_table(
   return NULL;
 }
 
+void handler_store_fields(TABLE *table, ::spectrum::Row *spectrum_row) {
+  memset(table->record[0], 0, table->s->null_bytes);
+  for (unsigned int i = 0; i < spectrum_row->fields().size(); i++) {
+    Field *field = table->field[i];
+    ::spectrum::Field spectrum_field = spectrum_row->fields()[i];
+    if (!spectrum_field.is_null()) {
+      std::string value = spectrum_field.value();
+      field->store(value.c_str(), value.length(), &my_charset_bin);
+    } else {
+      field->set_null();
+    }
+  }
+}
+
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
@@ -191,24 +205,17 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd;
       TABLE *table;
 
+      sql_print_information("WriteRow[%s] Start", request->table().c_str());
+
       thd = handler_create_thd(request->thread());
 
       table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
       empty_record(table);
-      memset(table->record[0], 0, table->s->null_bytes);
       table->autoinc_field_has_explicit_non_null_value = request->autoinc_field_has_explicit_non_null_value();
 
       ::spectrum::Row spectrum_row = request->row();
-      for (unsigned int i = 0; i < spectrum_row.fields().size(); i++) {
-        Field *field = table->field[i];
-        ::spectrum::Field spectrum_field = spectrum_row.fields()[i];
-        if (!spectrum_field.is_null()) {
-          std::string value = spectrum_field.value();
-          field->store(value.c_str(), value.length(), &my_charset_bin);
-        } else {
-          field->set_null();
-        }
-      }
+      handler_store_fields(table, &spectrum_row);
+      spectrum_print_row("WriteRow", table);
 
       // For autoincr field to work
       table->next_number_field = table->found_next_number_field;
@@ -229,8 +236,41 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status UpdateRow(::grpc::ServerContext* context, const ::spectrum::WriteRowRequest* request, ::spectrum::WriteRowResponse* response) {
-      return WriteRow(context, request, response);
+    ::grpc::Status UpdateRow(::grpc::ServerContext* context, const ::spectrum::UpdateRowRequest* request, ::spectrum::UpdateRowResponse* response) {
+      THD *thd;
+      TABLE *table;
+
+      sql_print_information("UpdateRow[%s] Start", request->table().c_str());
+
+      thd = handler_create_thd(request->thread());
+
+      table = handler_open_table(thd, request->database().c_str(), request->table().c_str());
+      empty_record(table);
+      table->autoinc_field_has_explicit_non_null_value = request->autoinc_field_has_explicit_non_null_value();
+
+      ::spectrum::Row spectrum_old_row = request->old_row();
+      handler_store_fields(table, &spectrum_old_row);
+      store_record(table, record[1]);
+      ::spectrum::Row spectrum_new_row = request->new_row();
+      handler_store_fields(table, &spectrum_new_row);
+      spectrum_print_row("UpdateRow", table);
+
+      // For autoincr field to work
+      table->next_number_field = table->found_next_number_field;
+      table->reginfo.lock_type = thr_lock_type::TL_WRITE;
+
+      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
+
+      table->file->ha_update_row(table->record[1], table->record[0]);
+
+      table->file->ha_release_auto_increment();
+
+      mysql_unlock_tables(thd, thd->lock);
+
+      trans_commit_stmt(thd, false);
+      trans_commit(thd, false);
+      thd->mdl_context.release_transactional_locks();
+      return grpc::Status::OK; 
     }
 
     ::grpc::Status CreateReplica(::grpc::ServerContext* context, const ::spectrum::CreateReplicaRequestMessage* request, ::spectrum::CreateReplicaResponseMessage* response) {

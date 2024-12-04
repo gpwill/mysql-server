@@ -33,7 +33,7 @@ INCLUDE_DIRECTORIES(
 
 MYSQL_ADD_PLUGIN(spectrum_storage
   spectrum_storage.cc
-  LINK_LIBRARIES spectrum_pb spectrum_compute
+  LINK_LIBRARIES spectrum_pb spectrum_common
   DEFAULT
 )
   

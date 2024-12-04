@@ -82,30 +82,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <grpcpp/create_channel.h>
 #include "spectrum.grpc.pb.h"
 
-void spectrum_print_row(char* method, TABLE* table) {
-  std::string row;
-  char value_buffer[1024];
-  String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
-
-  for (Field **field = table->field; *field; field++) {
-    if (table->read_set && !bitmap_is_set(table->read_set, (*field)->field_index())) {
-      break;
-    }
-    row += (*field)->field_name;
-    row += '=';
-    if (!(*field)->is_null()) {
-      (*field)->val_str(&value, &value);
-      row += value.c_ptr();
-    }
-    row += ", ";
-  }
-  if (row.length() >= 2) {
-    row.pop_back();
-    row.pop_back();
-  }
-  sql_print_information("%s[%s]: %s", method, table->s->table_name.str, row.c_str());
-}
-
 void spectrum_thread_fill_mdl_list_for_duration(THD *thd, spectrum::Thread *spectrum_thread, enum_mdl_duration duration) {
   MDL_context::Ticket_iterator it = thd->mdl_context.get_tickets_for_duration(duration);
   for (MDL_ticket *t = it++; t != nullptr; t = it++) {
@@ -137,6 +113,22 @@ void spectrum_thread_fill_mdl_list(THD *thd, spectrum::Thread *spectrum_thread) 
   spectrum_thread_fill_mdl_list_for_duration(thd, spectrum_thread, enum_mdl_duration::MDL_STATEMENT);
 }
 
+void spectrum_row_fill_record(TABLE* table, spectrum::Row *spectrum_row) {
+  char value_buffer[1024];
+  String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
+
+  for (Field **field = table->field; *field; field++) {
+    spectrum::Field *spectrum_field = spectrum_row->add_fields();
+    spectrum_field->set_name((*field)->field_name);
+    if (!(*field)->is_null()) {
+      (*field)->val_str(&value, &value);
+      spectrum_field->set_value(value.c_ptr());
+    } else {
+      spectrum_field->set_is_null(true);
+    }
+  }
+}
+
 int spectrum_compute_create_table(THD *thd, TABLE *table) {
   spectrum::CreateTableRequest request;
   spectrum::CreateTableResponse response;
@@ -164,35 +156,21 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
   spectrum::WriteRowRequest request;
   spectrum::WriteRowResponse response;
   grpc::ClientContext context;
-  char value_buffer[1024];
-  String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
 
   if (!is_spectrum_compute_node()) {
     return 1;
   }
 
-  spectrum_print_row("write_row", table);
+  spectrum_print_row("spectrum_write_row", table);
 
-  std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64000", grpc::InsecureChannelCredentials());
-  std::unique_ptr<spectrum::StorageNode::Stub> storage_node_stub = spectrum::StorageNode::NewStub(channel);
-
-  spectrum_thread_fill_mdl_list(thd, request.mutable_thread());
   request.set_table(table->s->table_name.str);
   request.set_database(table->s->db.str);
   request.set_autoinc_field_has_explicit_non_null_value(table->autoinc_field_has_explicit_non_null_value);
+  spectrum_row_fill_record(table, request.mutable_row());
+  spectrum_thread_fill_mdl_list(thd, request.mutable_thread());
 
-  spectrum::Row* spectrum_row = request.mutable_row();
-  for (Field **field = table->field; *field; field++) {
-    spectrum::Field *spectrum_field = spectrum_row->add_fields();
-    spectrum_field->set_name((*field)->field_name);
-    if (!(*field)->is_null()) {
-      (*field)->val_str(&value, &value);
-      spectrum_field->set_value(value.c_ptr());
-    } else {
-      spectrum_field->set_is_null(true);
-    }
-  }
-
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64000", grpc::InsecureChannelCredentials());
+  std::unique_ptr<spectrum::StorageNode::Stub> storage_node_stub = spectrum::StorageNode::NewStub(channel);
   grpc::Status status = storage_node_stub.get()->WriteRow(&context, request, &response);
   if (!status.ok()) {
     sql_print_error("spectrum_write_row[%s]: error=%s", table->s->table_name.str, status.error_message().c_str());
@@ -200,5 +178,35 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
   }
 
   table->file->insert_id_for_cur_row = response.insert_id();
+  return 0;
+}
+
+int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record, uchar *new_record) {
+  spectrum::UpdateRowRequest request;
+  spectrum::UpdateRowResponse response;
+  grpc::ClientContext context;
+
+  if (!is_spectrum_compute_node()) {
+    return 1;
+  }
+
+  spectrum_print_row("spectrum_update_row", table);
+
+  request.set_table(table->s->table_name.str);
+  request.set_database(table->s->db.str);
+  request.set_autoinc_field_has_explicit_non_null_value(table->autoinc_field_has_explicit_non_null_value);
+  spectrum_thread_fill_mdl_list(thd, request.mutable_thread());
+  
+  spectrum_row_fill_record(table, request.mutable_new_row());
+  restore_record(table, record[1]);
+  spectrum_row_fill_record(table, request.mutable_old_row());
+
+  //std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64000", grpc::InsecureChannelCredentials());
+  //std::unique_ptr<spectrum::StorageNode::Stub> storage_node_stub = spectrum::StorageNode::NewStub(channel);
+  //grpc::Status status = storage_node_stub.get()->UpdateRow(&context, request, &response);
+  //if (!status.ok()) {
+  //  sql_print_error("spectrum_update_row[%s]: error=%s", table->s->table_name.str, status.error_message().c_str());
+  //  return 2;
+  //}
   return 0;
 }

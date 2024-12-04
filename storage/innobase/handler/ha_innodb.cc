@@ -9758,6 +9758,8 @@ int ha_innobase::update_row(const uchar *old_row, uchar *new_row) {
 
   ut_a(m_prebuilt->trx == trx);
 
+  spectrum_compute_update_row(m_user_thd, table, old_row, new_row);
+
   if (high_level_read_only && !m_prebuilt->table->is_intrinsic()) {
     ib_senderrf(ha_thd(), IB_LOG_LEVEL_WARN, ER_READ_ONLY_MODE);
     return HA_ERR_TABLE_READONLY;

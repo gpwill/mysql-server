@@ -14,7 +14,7 @@ service HeadNode {
 service StorageNode {
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
   rpc WriteRow(WriteRowRequest) returns (WriteRowResponse) {} 
-  rpc UpdateRow(WriteRowRequest) returns (WriteRowResponse) {} 
+  rpc UpdateRow(UpdateRowRequest) returns (UpdateRowResponse) {} 
   rpc CreateReplica (CreateReplicaRequestMessage) returns (CreateReplicaResponseMessage) {}
   rpc UpdateEpoch (UpdateEpochRequestMessage) returns (UpdateEpochResponseMessage) {}
 
@@ -37,6 +37,8 @@ message MDL {
 }
 
 message Row {
+  bytes record = 1;
+  int32 record_length = 2;
   repeated Field fields = 3;
 }
 
@@ -68,10 +70,12 @@ message WriteRowResponse {
 }
 
 message UpdateRowRequest {
-  string database = 1;
-  string table = 2;
-  Row row = 3;
-  bool autoinc_field_has_explicit_non_null_value = 4;
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  Row new_row = 4;
+  Row old_row = 5;
+  bool autoinc_field_has_explicit_non_null_value = 6;
 }
 
 message UpdateRowResponse {
