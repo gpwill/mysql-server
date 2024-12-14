@@ -1619,8 +1619,6 @@ int ha_commit_trans(THD *thd, bool all, bool ignore_global_read_lock) {
   */
   std::tie(error, need_clear_owned_gtid) = commit_owned_gtids(thd, all);
 
-  spectrum_commit(thd, all, ignore_global_read_lock);
-
   /*
     'all' means that this is either an explicit commit issued by
     user, or an implicit commit issued by a DDL.
@@ -5240,7 +5238,8 @@ int ha_create_table(THD *thd, const char *path, const char *db,
     */
     if (!((create_info->options & HA_LEX_CREATE_TMP_TABLE) || is_temp_table ||
           dd::get_dictionary()->is_dd_table_name(db, table_name)) &&
-        (table.file->ht->flags & HTON_SUPPORTS_ATOMIC_DDL)) {
+        (table.file->ht->flags & HTON_SUPPORTS_ATOMIC_DDL) &&
+        (!is_spectrum_compute())) {
       if (thd->dd_client()->update<dd::Table>(table_def)) error = 1;
     }
   }

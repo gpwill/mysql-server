@@ -4431,6 +4431,8 @@ class handler {
 
   ha_statistics stats;
 
+  uint64 spectrum_handler_id;
+
   /* MultiRangeRead-related members: */
   range_seq_t mrr_iter;   /* Iterator to traverse the range sequence */
   RANGE_SEQ_IF mrr_funcs; /* Range sequence traversal functions */
@@ -4642,6 +4644,7 @@ class handler {
         estimation_rows_to_insert(0),
         ht(ht_arg),
         ref(nullptr),
+        spectrum_handler_id(0),
         range_scan_direction(RANGE_SCAN_ASC),
         in_range_check_pushed_down(false),
         end_range(nullptr),

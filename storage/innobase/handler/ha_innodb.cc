@@ -3872,6 +3872,8 @@ dberr_t Validate_files::validate(const DD_tablespaces &tablespaces) {
 
   ib::info(ER_IB_MSG_532) << "Reading DD tablespace files";
 
+  spectrum_debug = true;
+
   if (dc->fetch_global_components(&tablespaces)) {
     /* Failed to fetch the tablespaces from the DD. */
 
@@ -5768,6 +5770,10 @@ static int innobase_commit(handlerton *hton, /*!< in: InnoDB handlerton */
   DBUG_PRINT("trans", ("ending transaction"));
   DEBUG_SYNC_C("transaction_commit_start");
 
+  if (is_spectrum_compute()) {
+    return spectrum_compute_commit(thd, commit_trx, true);
+  }
+
   trx_t *trx = check_trx_exists(thd);
 
   /* We are about to check if the transaction is_aborted, and if it is,
@@ -7192,6 +7198,10 @@ int ha_innobase::open(const char *name, int, uint open_flags,
   m_upd_buf = nullptr;
   m_upd_buf_size = 0;
 
+  if (is_spectrum_compute()) {
+    return 0;
+  }
+
   /* Get pointer to a table object in InnoDB dictionary cache.
   For intrinsic table, get it from session private data */
   ib_table = thd_to_innodb_session(thd)->lookup_table_handler(norm_name);
@@ -7670,6 +7680,10 @@ uint ha_innobase::max_supported_key_part_length(
 
 int ha_innobase::close() {
   DBUG_TRACE;
+
+  if (is_spectrum_compute()) {
+    return 0;
+  }
 
   if (m_prebuilt->m_temp_read_shared) {
     temp_prebuilt_vec *vec = m_prebuilt->table->temp_prebuilt;
@@ -9003,7 +9017,9 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
   /* Increase the write count of handler */
   ha_statistic_increment(&System_status_var::ha_write_count);
 
-  spectrum_compute_write_row(m_user_thd, table, record);
+  if (is_spectrum_compute()) {
+    return spectrum_compute_write_row(m_user_thd, table, record);
+  }
 
   if (m_prebuilt->table->is_intrinsic()) {
     return intrinsic_table_write_row(record);
@@ -9756,9 +9772,11 @@ int ha_innobase::update_row(const uchar *old_row, uchar *new_row) {
 
   DBUG_TRACE;
 
-  ut_a(m_prebuilt->trx == trx);
+  if (is_spectrum_compute()) {
+    return spectrum_compute_update_row(m_user_thd, table, old_row, new_row);
+  }
 
-  spectrum_compute_update_row(m_user_thd, table, old_row, new_row);
+  ut_a(m_prebuilt->trx == trx);
 
   if (high_level_read_only && !m_prebuilt->table->is_intrinsic()) {
     ib_senderrf(ha_thd(), IB_LOG_LEVEL_WARN, ER_READ_ONLY_MODE);
@@ -9910,6 +9928,10 @@ func_exit:
 int ha_innobase::delete_row(
     const uchar *record) /*!< in: a row in MySQL format */
 {
+  if (is_spectrum_compute()) {
+    return spectrum_compute_delete_row(m_user_thd, table, record);
+  }
+
   dberr_t error;
   trx_t *trx = thd_to_trx(m_user_thd);
   TrxInInnoDB trx_in_innodb(trx);
@@ -9982,6 +10004,10 @@ int ha_innobase::delete_all_rows() {
 void ha_innobase::unlock_row(void) {
   DBUG_TRACE;
 
+  if (is_spectrum_compute()) {
+    return;
+  }
+
   /* Consistent read does not take any locks, thus there is
   nothing to unlock.  There is no locking for intrinsic table. */
 
@@ -10028,12 +10054,19 @@ void ha_innobase::unlock_row(void) {
 /* See handler.h and row0mysql.h for docs on this function. */
 
 bool ha_innobase::was_semi_consistent_read(void) {
+  if (is_spectrum_compute()) {
+    return false;
+  }
   return (m_prebuilt->row_read_type == ROW_READ_DID_SEMI_CONSISTENT);
 }
 
 /* See handler.h and row0mysql.h for docs on this function. */
 
 void ha_innobase::try_semi_consistent_read(bool yes) {
+  if (is_spectrum_compute()) {
+    return;
+  }
+
   ut_a(m_prebuilt->trx == thd_to_trx(ha_thd()));
 
   if (yes && m_prebuilt->trx->allow_semi_consistent()) {
@@ -10053,7 +10086,10 @@ int ha_innobase::index_init(uint keynr, /*!< in: key (index) number */
 {
   DBUG_TRACE;
 
-  spectrum_compute_init_index(m_user_thd, table, keynr);
+  if (is_spectrum_compute()) {
+    active_index = keynr;
+    return spectrum_compute_init_index(m_user_thd, table, keynr);
+  }
 
   return change_active_index(keynr);
 }
@@ -10064,7 +10100,9 @@ int ha_innobase::index_init(uint keynr, /*!< in: key (index) number */
 int ha_innobase::index_end(void) {
   DBUG_TRACE;
 
-  spectrum_compute_end_index(m_user_thd, table);
+  if (is_spectrum_compute()) {
+    return spectrum_compute_end_index(m_user_thd, table);
+  }
 
   if (m_prebuilt->index->last_sel_cur) {
     m_prebuilt->index->last_sel_cur->release();
@@ -10189,10 +10227,12 @@ int ha_innobase::index_read(
   DBUG_TRACE;
   DEBUG_SYNC_C("ha_innobase_index_read_begin");
 
+  if (is_spectrum_compute()) {
+    return spectrum_compute_read_row(m_user_thd, table, active_index, buf, key_ptr, key_len, find_flag);
+  }
+
   ut_a(m_prebuilt->trx == thd_to_trx(m_user_thd));
   ut_ad(key_len != 0 || find_flag != HA_READ_KEY_EXACT);
-
-  spectrum_compute_read_row(m_user_thd, table, active_index, buf, key_ptr, key_len, find_flag);
 
   ha_statistic_increment(&System_status_var::ha_read_key_count);
 
@@ -10612,7 +10652,9 @@ int ha_innobase::index_next(uchar *buf) /*!< in/out: buffer for next row in
 {
   ha_statistic_increment(&System_status_var::ha_read_next_count);
 
-  spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, false);
+  if (is_spectrum_compute()) {
+    return spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, false);
+  }
 
   return (general_fetch(buf, ROW_SEL_NEXT, 0));
 }
@@ -10625,8 +10667,10 @@ int ha_innobase::index_next_same(uchar *buf, /*!< in/out: buffer for the row */
                                  uint)          /*!< in: key value length */
 {
   ha_statistic_increment(&System_status_var::ha_read_next_count);
-
-  spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, true);
+  
+  if (is_spectrum_compute()) {
+    return spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, true);
+  }
 
   return (general_fetch(buf, ROW_SEL_NEXT, m_last_match_mode));
 }
@@ -10640,7 +10684,9 @@ int ha_innobase::index_prev(
 {
   ha_statistic_increment(&System_status_var::ha_read_prev_count);
   
-  spectrum_compute_read_prev_row(m_user_thd, table, active_index, buf);
+  if (is_spectrum_compute()) {
+    return spectrum_compute_read_prev_row(m_user_thd, table, active_index, buf);
+  }
 
   return (general_fetch(buf, ROW_SEL_PREV, 0));
 }
@@ -10807,10 +10853,13 @@ int ha_innobase::read_range_next() {
 @return 0 or error number */
 int ha_innobase::rnd_init(bool scan) {
   DBUG_TRACE;
+  
+  if (is_spectrum_compute()) {
+    return spectrum_compute_init_rnd(m_user_thd, table, scan);
+  }
+
   assert(table_share->is_missing_primary_key() ==
          (bool)m_prebuilt->clust_index_was_generated);
-
-  spectrum_compute_init_rnd(m_user_thd, table, scan);
 
   int err = change_active_index(table_share->primary_key);
 
@@ -10854,7 +10903,9 @@ int ha_innobase::rnd_next(uchar *buf) /*!< in/out: returns the row in this
 
     m_start_of_scan = false;
   } else {
-    spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, false);
+    if (is_spectrum_compute()) {
+      return spectrum_compute_read_next_row(m_user_thd, table, active_index, buf, false);
+    }
 
     error = general_fetch(buf, ROW_SEL_NEXT, 0);
   }
@@ -15104,13 +15155,15 @@ int ha_innobase::create(const char *name, TABLE *form,
                         HA_CREATE_INFO *create_info, dd::Table *table_def) {
   THD *thd = ha_thd();
 
+  if (is_spectrum_compute()) {
+    return spectrum_compute_create_table(thd, form);
+  }
+
   if (thd_sql_command(thd) == SQLCOM_TRUNCATE) {
     return (truncate_impl(name, form, table_def));
   }
 
   trx_t *trx = check_trx_exists(thd);
-
-  spectrum_compute_create_table(thd, form);
 
   if (!(create_info->options & HA_LEX_CREATE_TMP_TABLE)) {
     innobase_register_trx(ht, thd, trx);
@@ -16607,6 +16660,11 @@ int ha_innobase::records(ha_rows *num_rows) /*!< out: number of rows */
 {
   DBUG_TRACE;
 
+  if (is_spectrum_compute()) {
+    *num_rows = 0;
+    return 0;
+  }
+
   dberr_t ret;
   ulint n_rows = 0; /* Record count in this view */
 
@@ -17207,6 +17265,10 @@ int ha_innobase::info_low(uint flag, bool is_analyze) {
   DBUG_TRACE;
 
   DEBUG_SYNC_C("ha_innobase_info_low");
+
+  if (is_spectrum_compute()) {
+    return 0;
+  }
 
   /* If we are forcing recovery at a high level, we will suppress
   statistics calculation on tables, because that may crash the
@@ -18347,6 +18409,10 @@ int ha_innobase::check(THD *thd,                /*!< in: user thread handle */
 int ha_innobase::extra(enum ha_extra_function operation)
 /*!< in: HA_EXTRA_FLUSH or some other flag */
 {
+  if (is_spectrum_compute()) {
+    return 0;
+  }
+
   if (m_prebuilt->table) {
 #ifdef UNIV_DEBUG
     if (m_prebuilt->table->n_ref_count > 0)
@@ -18424,6 +18490,10 @@ exists for readability only. ha_innobase::reset() doesn't give any
 clue about the method. */
 
 int ha_innobase::end_stmt() {
+  if (is_spectrum_compute()) {
+    return 0;
+  }
+
   if (m_prebuilt->blob_heap) {
     row_mysql_prebuilt_free_blob_heap(m_prebuilt);
   }
@@ -18629,13 +18699,20 @@ int ha_innobase::external_lock(THD *thd, /*!< in: handle to the user thread */
   DBUG_TRACE;
   DBUG_PRINT("enter", ("lock_type: %d", lock_type));
 
-  update_thd(thd);
-
-  if (lock_type == F_UNLCK) {
-    spectrum_compute_unlock_table(m_user_thd, table);
-  } else {
-    spectrum_compute_lock_table(m_user_thd, table);
+  if (is_spectrum_compute()) {
+    m_user_thd = thd;
+    if (lock_type == F_UNLCK) {
+      return spectrum_compute_unlock_table(m_user_thd, table);
+    } else {
+      trans_register_ha(thd, false, ht, nullptr);
+      if (thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN)) {
+        trans_register_ha(thd, true, ht, nullptr);
+      }
+      return spectrum_compute_lock_table(m_user_thd, table);
+    }
   }
+
+  update_thd(thd);
 
   trx_t *trx = m_prebuilt->trx;
 
@@ -19467,6 +19544,10 @@ THR_LOCK_DATA **ha_innobase::store_lock(
   because we call update_thd() later, in ::external_lock()! Failure to
   understand this caused a serious memory corruption bug in 5.1.11. */
 
+  if (is_spectrum_compute()) {
+    return to;
+  }
+
   trx_t *trx = check_trx_exists(thd);
 
   TrxInInnoDB trx_in_innodb(trx);
@@ -19653,6 +19734,10 @@ dberr_t ha_innobase::innobase_get_autoinc(
 }
 
 void ha_innobase::release_auto_increment() {
+  if (is_spectrum_compute()) {
+    return;
+  }
+
   trx_t *trx = m_prebuilt->trx;
   TrxInInnoDB trx_in_innodb(trx);
 
@@ -20008,6 +20093,10 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
                                                  transaction false - the current
                                                  SQL statement ended */
 {
+  if (is_spectrum_compute()) {
+    return 0;
+  }
+
   trx_t *trx = check_trx_exists(thd);
 
   assert(hton == innodb_hton_ptr);

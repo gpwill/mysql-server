@@ -114,6 +114,8 @@
 #include "template_utils.h"
 #include "thr_mutex.h"
 
+#include "spectrum.h"
+
 class Parse_tree_root;
 
 using std::max;
@@ -2200,6 +2202,9 @@ void THD::restore_backup_open_tables_state(Open_tables_backup *backup) {
 
 void THD::begin_attachable_ro_transaction() {
   m_attachable_trx = new Attachable_trx(this, m_attachable_trx);
+  if (is_spectrum_compute()) {
+    spectrum_compute_begin_attachable_transaction(this, true);
+  }
 }
 
 void THD::end_attachable_transaction() {
@@ -2208,12 +2213,19 @@ void THD::end_attachable_transaction() {
   // Restore attachable transaction which was active before we started
   // the one which just has ended. NULL in most cases.
   m_attachable_trx = prev_trx;
+
+  if (is_spectrum_compute()) {
+    spectrum_compute_end_attachable_transaction(this);
+  }
 }
 
 void THD::begin_attachable_rw_transaction() {
   assert(!m_attachable_trx);
 
   m_attachable_trx = new Attachable_trx_rw(this);
+  if (is_spectrum_compute()) {
+    spectrum_compute_begin_attachable_transaction(this, false);
+  }
 }
 
 /****************************************************************************

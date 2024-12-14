@@ -59,13 +59,14 @@ void spectrum_print_row(char* method, TABLE* table, uchar* record) {
   std::string row;
   char value_buffer[1024];
   String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
+  uint64 hander_id = table->file->spectrum_handler_id ? table->file->spectrum_handler_id : (uint64)table->file;
+  MY_BITMAP *temp_read_set;
 
+  temp_read_set = table->read_set;
+  table->read_set = nullptr;
   repoint_field_to_record(table, table->record[0], record);
 
   for (Field **field = table->field; *field; field++) {
-    if (table->read_set && !bitmap_is_set(table->read_set, (*field)->field_index())) {
-      break;
-    }
     row += (*field)->field_name;
     row += '=';
     if (!(*field)->is_null()) {
@@ -79,9 +80,10 @@ void spectrum_print_row(char* method, TABLE* table, uchar* record) {
     row.pop_back();
     row.pop_back();
   }
-  sql_print_information("%s[%s]: %s", method, table->s->table_name.str, row.c_str());
+  sql_print_information("%s[%s:%d]: %s", method, table->s->table_name.str, hander_id, row.c_str());
 
   repoint_field_to_record(table, record, table->record[0]);
+  table->read_set = temp_read_set;
 }
 
 void spectrum_row_fill_fields(TABLE* table, spectrum::Row *spectrum_row) {
@@ -100,7 +102,7 @@ void spectrum_row_fill_fields(TABLE* table, uchar* record, spectrum::Row *spectr
     if (!(*field)->is_null()) {
       value.set_charset((*field)->charset());
       (*field)->val_str(&value, &value);
-      spectrum_field->set_value(value.c_ptr());
+      spectrum_field->set_value(value.c_ptr(), value.length());
     } else {
       spectrum_field->set_is_null(true);
     }
@@ -120,13 +122,16 @@ void spectrum_row_extract_fields(TABLE *table, uchar* record, spectrum::Row *spe
   table->write_set = nullptr;
   repoint_field_to_record(table, table->record[0], record);
 
-  memset(table->record[0], 0, table->s->null_bytes);
+  memset(record, 0, table->s->null_bytes);
   for (int i = 0; i < spectrum_row->fields().size(); i++) {
     Field *field = table->field[i];
     ::spectrum::Field spectrum_field = spectrum_row->fields()[i];
+
+    assert(!strcmp(field->field_name, spectrum_field.name().c_str()));
+
     if (!spectrum_field.is_null()) {
       std::string value = spectrum_field.value();
-      field->store(value.c_str(), value.length(), field->charset());
+      field->store(value.data(), value.length(), field->charset());
     } else {
       field->set_null();
     }

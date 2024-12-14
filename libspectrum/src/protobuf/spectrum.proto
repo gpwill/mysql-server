@@ -25,7 +25,11 @@ service StorageNode {
   rpc ReadPrevRow(ReadPrevRowRequest) returns (ReadPrevRowResponse) {} 
   rpc WriteRow(WriteRowRequest) returns (WriteRowResponse) {} 
   rpc UpdateRow(UpdateRowRequest) returns (UpdateRowResponse) {} 
+  rpc DeleteRow(DeleteRowRequest) returns (DeleteRowResponse) {} 
   rpc Commit(CommitRequest) returns (CommitResponse) {} 
+
+  rpc BeginAttachableTransaction(BeginAttachableTransactionRequest) returns (BeginAttachableTransactionResponse) {}
+  rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
 
   rpc CreateReplica (CreateReplicaRequestMessage) returns (CreateReplicaResponseMessage) {}
   rpc UpdateEpoch (UpdateEpochRequestMessage) returns (UpdateEpochResponseMessage) {}
@@ -69,7 +73,8 @@ message CreateTableRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
+  int64 handler = 4;
+  int32 lock_type = 5;
 }
 
 message CreateTableResponse {
@@ -79,7 +84,9 @@ message LockTableRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  bool start_stmt = 6;
 }
 
 message UnlockTableResponse {
@@ -89,6 +96,8 @@ message UnlockTableRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
+  int64 handler = 4;
+  int32 lock_type = 5;
 }
 
 message LockTableResponse {
@@ -98,8 +107,9 @@ message InitIndexRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  int32 index = 5;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  int32 index = 6;
 }
 
 message InitIndexResponse {
@@ -109,7 +119,8 @@ message EndIndexRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
+  int64 handler = 4;
+  int32 lock_type = 5;
 }
 
 message EndIndexResponse {
@@ -119,8 +130,9 @@ message InitRndRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  bool scan = 5;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  bool scan = 6;
 }
 
 message InitRndResponse {
@@ -130,7 +142,8 @@ message EndRndRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
+  int64 handler = 4;
+  int32 lock_type = 5;
 }
 
 message EndRndResponse {
@@ -140,13 +153,14 @@ message ReadRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  int32 index = 5;
-  bytes key = 6;
-  int32 key_len = 7;
-  int32 find_flag = 8;
-  int32 init = 9;
-  bool init_scan = 10;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  int32 index = 6;
+  bytes key = 7;
+  int32 key_len = 8;
+  int32 find_flag = 9;
+  int32 init = 10;
+  bool init_scan = 11;
 }
 
 message ReadRowResponse {
@@ -157,11 +171,12 @@ message ReadNextRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  int32 index = 5;
-  int32 same = 6;
-  int32 init = 7;
-  bool init_scan = 8;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  int32 index = 6;
+  int32 same = 7;
+  int32 init = 8;
+  bool init_scan = 9;
 }
 
 message ReadNextRowResponse {
@@ -172,10 +187,11 @@ message ReadPrevRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  int32 index = 5;
-  int32 init = 6;
-  bool init_scan = 7;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  int32 index = 6;
+  int32 init = 7;
+  bool init_scan = 8;
 }
 
 message ReadPrevRowResponse {
@@ -186,9 +202,10 @@ message WriteRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  Row row = 5;
-  bool autoinc_field_has_explicit_non_null_value = 6;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  Row row = 6;
+  bool autoinc_field_has_explicit_non_null_value = 7;
 }
 
 message WriteRowResponse {
@@ -199,13 +216,26 @@ message UpdateRowRequest {
   Thread thread = 1;
   string database = 2;
   string table = 3;
-  int32 lock_type = 4;
-  Row new_row = 5;
-  Row old_row = 6;
-  bool autoinc_field_has_explicit_non_null_value = 7;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  Row new_row = 6;
+  Row old_row = 7;
+  bool autoinc_field_has_explicit_non_null_value = 8;
 }
 
 message UpdateRowResponse {
+}
+
+message DeleteRowRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  Row row = 6;
+}
+
+message DeleteRowResponse {
 }
 
 message CommitRequest {
@@ -217,12 +247,20 @@ message CommitRequest {
 message CommitResponse {
 }
 
+message BeginAttachableTransactionRequest {
+  Thread thread = 1;
+  bool readonly = 2;
+}
 
+message BeginAttachableTransactionResponse {
+}
 
+message EndAttachableTransactionRequest {
+  Thread thread = 1;
+}
 
-
-
-
+message EndAttachableTransactionResponse {
+}
 
 
 

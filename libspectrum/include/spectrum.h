@@ -25,7 +25,9 @@
 
 #include "spectrum.grpc.pb.h"
 
-inline bool is_spectrum_compute_node() {
+extern bool spectrum_debug;
+
+inline bool is_spectrum_compute() {
   char* env = getenv("SPECTRUM_COMPUTE_NODE");
   if (env != nullptr) {
     return true;
@@ -33,7 +35,7 @@ inline bool is_spectrum_compute_node() {
   return false;
 }
 
-inline bool is_spectrum_storage_node() {
+inline bool is_spectrum_storage() {
   char* env = getenv("SPECTRUM_STORAGE_NODE");
   if (env != nullptr) {
     return true;
@@ -61,6 +63,9 @@ extern int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uc
 extern int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *buf);
 extern int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record);
 extern int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record, uchar *new_record);
-extern int spectrum_commit(THD *thd, bool all, bool ignore_global_read_lock);
+extern int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record);
+extern int spectrum_compute_commit(THD *thd, bool all, bool ignore_global_read_lock);
+extern int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly);
+extern int spectrum_compute_end_attachable_transaction(THD *thd);
 
 #endif
