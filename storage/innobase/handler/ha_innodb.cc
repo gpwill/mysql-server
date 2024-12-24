@@ -10838,11 +10838,17 @@ int ha_innobase::sample_end(void *scan_ctx) {
 int ha_innobase::read_range_first(const key_range *start_key,
                                   const key_range *end_key, bool eq_range_arg,
                                   bool sorted) {
+  if (is_spectrum_compute()) {
+    return handler::read_range_first(start_key, end_key, eq_range_arg, sorted);
+  }
   auto guard = m_prebuilt->get_is_reading_range_guard();
   return handler::read_range_first(start_key, end_key, eq_range_arg, sorted);
 }
 
 int ha_innobase::read_range_next() {
+  if (is_spectrum_compute()) {
+    return (handler::read_range_next());
+  }
   auto guard = m_prebuilt->get_is_reading_range_guard();
   return (handler::read_range_next());
 }
