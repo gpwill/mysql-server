@@ -59,104 +59,88 @@
 #include <grpcpp/server_builder.h>
 #include "spectrum.grpc.pb.h"
 
-PSI_memory_key key_memory_mysql_heartbeat_context;
-
-#ifdef HAVE_PSI_INTERFACE
-
-static PSI_memory_info all_deamon_example_memory[] = {
-    {&key_memory_mysql_heartbeat_context, "mysql_heartbeat_context", 0, 0,
-     PSI_DOCUMENT_ME}};
-
-static void init_deamon_example_psi_keys() {
-  const char *category = "deamon_example";
-  int count;
-
-  count = static_cast<int>(array_elements(all_deamon_example_memory));
-  mysql_memory_register(category, all_deamon_example_memory, count);
-}
-#endif /* HAVE_PSI_INTERFACE */
-
-#define HEART_STRING_BUFFER 100
-
-THD *current_thread = nullptr;
-
-THD *handler_create_thd(const spectrum::Thread &spectrum_thread)
-{
-  MDL_request_list mdl_requests;
-
-  my_thread_init();
-
-  if (!current_thread) {
-    sql_print_information("Creating new thread"); 
-
-    current_thread = new (std::nothrow) THD;
-
-    current_thread->get_protocol_classic()->init_net((Vio *)0);
-    current_thread->set_new_thread_id();
-    current_thread->thread_stack = reinterpret_cast<char *>(&current_thread);
-  }
-  current_thread->store_globals();
-  current_thread->variables.option_bits = spectrum_thread.system_variables().option_bits();
-
-  for (unsigned int i = 0; i < spectrum_thread.mdl_list().size(); i++) {
-    spectrum::MDL mdl = spectrum_thread.mdl_list()[i];   
-    
-    //sql_print_information("MDL: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d",
-    //  mdl.namespace_(), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str(), mdl.type(), mdl.duration()); 
-    
-    MDL_key mdl_key;
-    if (mdl.column().length()) {
-      mdl_key.mdl_key_init(static_cast<MDL_key::enum_mdl_namespace>(mdl.namespace_()), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str());
-    } else {
-      mdl_key.mdl_key_init(static_cast<MDL_key::enum_mdl_namespace>(mdl.namespace_()), mdl.schema().c_str(), mdl.table().c_str());
-    }
-
-    MDL_request mdl_request;
-    MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, static_cast<enum_mdl_type>(mdl.type()), static_cast<enum_mdl_duration>(mdl.duration()));
-    current_thread->mdl_context.acquire_lock(&mdl_request, 10000);
-  }
-
-  return (current_thread);
-}
-
-TABLE *handler_open_table(
-    THD *thd,
-    const char *db_name,
-    const char *table_name,
-    uint64 handler_id,
-    thr_lock_type lock_type)
-{
-  Open_table_context otc(thd, 0);
-
-  Table_ref tables(db_name, strlen(db_name), table_name, strlen(table_name),
-                   table_name, lock_type);
-  if (!open_table(thd, &tables, &otc)) {
-    TABLE *table = tables.table;
-    table->use_all_columns();
-    table->file->spectrum_handler_id = handler_id;
-    return table;
-  }
-  return nullptr;
-}
-
-TABLE *handler_find_or_open_table(
-    THD *thd,
-    const char *db_name,
-    const char *table_name,
-    uint64 handler_id,
-    thr_lock_type lock_type)
-{
-  for (TABLE *t = thd->open_tables; t; t = t->next) {
-    if (t->file->spectrum_handler_id == handler_id) {
-      assert(!strcmp(t->s->db.str, db_name) && !strcmp(t->s->table_name.str, table_name));
-      return t;
-    }
-  }
-
-  return handler_open_table(thd, db_name, table_name, handler_id, lock_type);
-}
+char thread_stack = 'a';
 
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
+  private:
+    THD *current_thread = nullptr;
+
+    THD *handler_create_thd(const spectrum::Thread &spectrum_thread)
+    {
+      MDL_request_list mdl_requests;
+
+      my_thread_init();
+
+      if (!current_thread) {
+        sql_print_information("Creating new thread"); 
+
+        current_thread = new (std::nothrow) THD;
+
+        current_thread->get_protocol_classic()->init_net((Vio *)0);
+        current_thread->set_new_thread_id();
+        current_thread->thread_stack = reinterpret_cast<char *>(&thread_stack);
+      }
+      current_thread->store_globals();
+      current_thread->variables.option_bits = spectrum_thread.system_variables().option_bits();
+
+      for (unsigned int i = 0; i < spectrum_thread.mdl_list().size(); i++) {
+        spectrum::MDL mdl = spectrum_thread.mdl_list()[i];   
+        
+        //sql_print_information("MDL: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d",
+        //  mdl.namespace_(), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str(), mdl.type(), mdl.duration()); 
+        
+        MDL_key mdl_key;
+        if (mdl.column().length()) {
+          mdl_key.mdl_key_init(static_cast<MDL_key::enum_mdl_namespace>(mdl.namespace_()), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str());
+        } else {
+          mdl_key.mdl_key_init(static_cast<MDL_key::enum_mdl_namespace>(mdl.namespace_()), mdl.schema().c_str(), mdl.table().c_str());
+        }
+
+        MDL_request mdl_request;
+        MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, static_cast<enum_mdl_type>(mdl.type()), static_cast<enum_mdl_duration>(mdl.duration()));
+        current_thread->mdl_context.acquire_lock(&mdl_request, 10000);
+      }
+
+      return (current_thread);
+    }
+
+    TABLE *handler_open_table(
+        THD *thd,
+        const char *db_name,
+        const char *table_name,
+        uint64 handler_id,
+        thr_lock_type lock_type)
+    {
+      Open_table_context otc(thd, 0);
+
+      Table_ref tables(db_name, strlen(db_name), table_name, strlen(table_name),
+                      table_name, lock_type);
+      if (!open_table(thd, &tables, &otc)) {
+        TABLE *table = tables.table;
+        table->use_all_columns();
+        table->file->spectrum_handler_id = handler_id;
+        return table;
+      }
+      return nullptr;
+    }
+
+    TABLE *handler_find_or_open_table(
+        THD *thd,
+        const char *db_name,
+        const char *table_name,
+        uint64 handler_id,
+        thr_lock_type lock_type)
+    {
+      for (TABLE *t = thd->open_tables; t; t = t->next) {
+        if (t->file->spectrum_handler_id == handler_id) {
+          assert(!strcmp(t->s->db.str, db_name) && !strcmp(t->s->table_name.str, table_name));
+          return t;
+        }
+      }
+
+      return handler_open_table(thd, db_name, table_name, handler_id, lock_type);
+    }
+
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
@@ -489,56 +473,13 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       return grpc::Status::OK; 
     }
-
-    ::grpc::Status CreateReplica(::grpc::ServerContext* context, const ::spectrum::CreateReplicaRequestMessage* request, ::spectrum::CreateReplicaResponseMessage* response) {
-      return grpc::Status::OK;
-    }
-
-    ::grpc::Status UpdateEpoch(::grpc::ServerContext* context, const ::spectrum::UpdateEpochRequestMessage* request, ::spectrum::UpdateEpochResponseMessage* response) {
-      return grpc::Status::OK;
-    }
-
-    ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequestMessage* request, ::spectrum::PrepareResponseMessage* response) {
-      return grpc::Status::OK;
-    }
-
-    ::grpc::Status Accept(::grpc::ServerContext* context, const ::spectrum::AcceptRequestMessage* request, ::spectrum::AcceptResponseMessage* response) {
-      return grpc::Status::OK;
-    }
-
-    ::grpc::Status Abort(::grpc::ServerContext* context, const ::spectrum::AbortRequestMessage* request, ::spectrum::AbortResponseMessage* response) {
-      return grpc::Status::OK;
-    }
 };
 
-struct mysql_heartbeat_context {
-  my_thread_handle heartbeat_thread;
-  File heartbeat_file;
-
+struct spectrum_storage_plugin_context {
   std::unique_ptr<grpc::Server> server;
 };
 
-static void *mysql_heartbeat(void *p) {
-  DBUG_TRACE;
-  struct mysql_heartbeat_context *con = (struct mysql_heartbeat_context *)p;
-  char buffer[HEART_STRING_BUFFER];
-  time_t result;
-  struct tm tm_tmp;
-
-  while (true) {
-    sleep(5);
-
-    result = time(nullptr);
-    localtime_r(&result, &tm_tmp);
-    snprintf(buffer, sizeof(buffer),
-             "Heartbeat at %02d%02d%02d %2d:%02d:%02d\n", tm_tmp.tm_year % 100,
-             tm_tmp.tm_mon + 1, tm_tmp.tm_mday, tm_tmp.tm_hour, tm_tmp.tm_min,
-             tm_tmp.tm_sec);
-    my_write(con->heartbeat_file, (uchar *)buffer, strlen(buffer), MYF(0));
-  }
-
-  return nullptr;
-}
+PSI_memory_key key_memory_spectrum_storage_plugin_context;
 
 /*
   Initialize the daemon example at server start or plugin installation.
@@ -553,48 +494,12 @@ static void *mysql_heartbeat(void *p) {
 
 static int daemon_example_plugin_init(void *p) {
   DBUG_TRACE;
-
-#ifdef HAVE_PSI_INTERFACE
-  init_deamon_example_psi_keys();
-#endif
-
-  struct mysql_heartbeat_context *con;
-  my_thread_attr_t attr; /* Thread attributes */
-  char heartbeat_filename[FN_REFLEN];
-  char buffer[HEART_STRING_BUFFER];
-  time_t result = time(nullptr);
-  struct tm tm_tmp;
-
+  struct spectrum_storage_plugin_context *con;
   struct st_plugin_int *plugin = (struct st_plugin_int *)p;
 
-  con = (struct mysql_heartbeat_context *)my_malloc(
-      key_memory_mysql_heartbeat_context,
-      sizeof(struct mysql_heartbeat_context), MYF(0));
-
-  fn_format(heartbeat_filename, "mysql-heartbeat", "", ".log",
-            MY_REPLACE_EXT | MY_UNPACK_FILENAME);
-  unlink(heartbeat_filename);
-  con->heartbeat_file = my_open(heartbeat_filename, O_CREAT | O_RDWR, MYF(0));
-
-  /*
-    No threads exist at this point in time, so this is thread safe.
-  */
-  localtime_r(&result, &tm_tmp);
-  snprintf(buffer, sizeof(buffer),
-           "Starting up at %02d%02d%02d %2d:%02d:%02d\n", tm_tmp.tm_year % 100,
-           tm_tmp.tm_mon + 1, tm_tmp.tm_mday, tm_tmp.tm_hour, tm_tmp.tm_min,
-           tm_tmp.tm_sec);
-  my_write(con->heartbeat_file, (uchar *)buffer, strlen(buffer), MYF(0));
-
-  my_thread_attr_init(&attr);
-  my_thread_attr_setdetachstate(&attr, MY_THREAD_CREATE_JOINABLE);
-
-  /* now create the thread */
-  if (my_thread_create(&con->heartbeat_thread, &attr, mysql_heartbeat,
-                       (void *)con) != 0) {
-    fprintf(stderr, "Could not create heartbeat thread!\n");
-    exit(0);
-  }
+  con = (struct spectrum_storage_plugin_context *)my_malloc(
+      key_memory_spectrum_storage_plugin_context,
+      sizeof(struct spectrum_storage_plugin_context), MYF(0));
   plugin->data = (void *)con;
 
   if (is_spectrum_storage()) {
@@ -625,32 +530,6 @@ static int daemon_example_plugin_init(void *p) {
 
 static int daemon_example_plugin_deinit(void *p) {
   DBUG_TRACE;
-  char buffer[HEART_STRING_BUFFER];
-  struct st_plugin_int *plugin = (struct st_plugin_int *)p;
-  struct mysql_heartbeat_context *con =
-      (struct mysql_heartbeat_context *)plugin->data;
-  time_t result = time(nullptr);
-  struct tm tm_tmp;
-  void *dummy_retval;
-
-  my_thread_cancel(&con->heartbeat_thread);
-
-  localtime_r(&result, &tm_tmp);
-  snprintf(buffer, sizeof(buffer),
-           "Shutting down at %02d%02d%02d %2d:%02d:%02d\n",
-           tm_tmp.tm_year % 100, tm_tmp.tm_mon + 1, tm_tmp.tm_mday,
-           tm_tmp.tm_hour, tm_tmp.tm_min, tm_tmp.tm_sec);
-  my_write(con->heartbeat_file, (uchar *)buffer, strlen(buffer), MYF(0));
-
-  /*
-    Need to wait for the hearbeat thread to terminate before closing
-    the file it writes to and freeing the memory it uses
-  */
-  my_thread_join(&con->heartbeat_thread, &dummy_retval);
-
-  my_close(con->heartbeat_file, MYF(0));
-
-  my_free(con);
 
   return 0;
 }
@@ -666,7 +545,7 @@ mysql_declare_plugin(spectrum_storage){
     &daemon_example_plugin,
     "spectrum_storage",
     PLUGIN_AUTHOR_ORACLE,
-    "Daemon example, creates a heartbeat beat file in mysql-heartbeat.log",
+    "Spectrum storage",
     PLUGIN_LICENSE_GPL,
     daemon_example_plugin_init,   /* Plugin Init */
     nullptr,                      /* Plugin Check uninstall */

@@ -1,15 +1,6 @@
 syntax = "proto3";
 
-option java_multiple_files = true;
-option java_package = "org.spectrum.grpc";
-option java_outer_classname = "HelloWorldProto";
-option objc_class_prefix = "HLW";
-
 package spectrum;
-
-service HeadNode {
-  rpc Propose (DataItemMessage) returns (DataItemMessage) {}
-}
 
 service StorageNode {
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
@@ -30,13 +21,6 @@ service StorageNode {
 
   rpc BeginAttachableTransaction(BeginAttachableTransactionRequest) returns (BeginAttachableTransactionResponse) {}
   rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
-
-  rpc CreateReplica (CreateReplicaRequestMessage) returns (CreateReplicaResponseMessage) {}
-  rpc UpdateEpoch (UpdateEpochRequestMessage) returns (UpdateEpochResponseMessage) {}
-
-  rpc Prepare (PrepareRequestMessage) returns (PrepareResponseMessage) {}
-  rpc Accept (AcceptRequestMessage) returns (AcceptResponseMessage) {}
-  rpc Abort (AbortRequestMessage) returns (AbortResponseMessage) {}
 }
 
 message SystemVariables {
@@ -260,80 +244,4 @@ message EndAttachableTransactionRequest {
 }
 
 message EndAttachableTransactionResponse {
-}
-
-
-
-
-
-message CreateReplicaRequestMessage {
-  string namespace = 1;
-  int32 replicaId = 2;
-}
-
-message CreateReplicaResponseMessage {
-  string acceptorId = 1;
-}
-
-message UpdateEpochRequestMessage {
-  string namespace = 1;
-  int32 replicaId = 2;
-  int64 epoch = 3;
-}
-
-message UpdateEpochResponseMessage {
-  int64 epoch = 1;
-}
-
-message DataItemMessage {
-  string namespace = 1;
-  string key = 2;
-  optional string value = 3;
-  optional bool isNext = 4;
-  int64 version = 5;
-}
-
-message ProposalMessage {
-  string key = 1;
-  optional string value = 2;
-  optional bool isNext = 3;
-  int64 version = 4;
-  int64 sequenceNumber = 5;
-  optional ProposalMessage parentProposal = 6;
-}
-
-message PrepareRequestMessage {
-  string acceptorId = 1;
-  int64 epoch = 2;
-  ProposalMessage proposal = 3;
-}
-
-message PrepareResponseMessage {
-  bool prepared = 1;
-  ProposalMessage preparedProposal = 2;
-  ProposalMessage acceptedProposal = 3;
-  int64 epoch = 4;
-  int64 maxSequenceNumber = 5;
-}
-
-message AcceptRequestMessage {
-  string acceptorId = 1;
-  int64 epoch = 2;
-  ProposalMessage proposal = 3;
-}
-
-message AcceptResponseMessage {
-  bool accepted = 1;
-  ProposalMessage preparedProposal = 2;
-  ProposalMessage acceptedProposal = 3;
-  int64 epoch = 4;
-  int64 maxSequenceNumber = 5;
-}
-
-message AbortRequestMessage {
-  string acceptorId = 1;
-  ProposalMessage proposal = 2;
-}
-
-message AbortResponseMessage {
 }
