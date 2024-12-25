@@ -3,6 +3,9 @@ syntax = "proto3";
 package spectrum;
 
 service StorageNode {
+  rpc BeginAttachableTransaction(BeginAttachableTransactionRequest) returns (BeginAttachableTransactionResponse) {}
+  rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
+
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
   rpc LockTable(LockTableRequest) returns (LockTableResponse) {}
   rpc UnlockTable(UnlockTableRequest) returns (UnlockTableResponse) {}
@@ -19,8 +22,8 @@ service StorageNode {
   rpc DeleteRow(DeleteRowRequest) returns (DeleteRowResponse) {} 
   rpc Commit(CommitRequest) returns (CommitResponse) {} 
 
-  rpc BeginAttachableTransaction(BeginAttachableTransactionRequest) returns (BeginAttachableTransactionResponse) {}
-  rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
+  rpc ReplicateRow(ReplicateRowRequest) returns (ReplicateRowResponse) {} 
+
 }
 
 message SystemVariables {
@@ -193,7 +196,8 @@ message WriteRowRequest {
 }
 
 message WriteRowResponse {
-  int64 insert_id = 1;
+  Row row = 1;
+  int64 insert_id = 2;
 }
 
 message UpdateRowRequest {
@@ -244,4 +248,17 @@ message EndAttachableTransactionRequest {
 }
 
 message EndAttachableTransactionResponse {
+}
+
+message ReplicateRowRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  Row new_row = 6;
+  Row old_row = 7;
+}
+
+message ReplicateRowResponse {
 }

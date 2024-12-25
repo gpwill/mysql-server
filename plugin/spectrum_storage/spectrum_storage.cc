@@ -351,8 +351,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
 
-      sql_print_information("WriteRow[%s:%d]", request->table().c_str(), request->handler());
-
       thd = handler_create_thd(request->thread());
       table = handler_find_or_open_table(thd, request->database().c_str(), request->table().c_str(), request->handler(), lock_type);
       empty_record(table);
@@ -368,8 +366,10 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       table->file->ha_write_row(table->record[0]);
       response->set_insert_id(table->file->insert_id_for_cur_row);
-
       table->file->ha_release_auto_increment();
+
+      spectrum_print_row("WriteRowNew", table);
+      spectrum_row_fill_fields(table, response->mutable_row());
 
       return grpc::Status::OK; 
     }
@@ -378,8 +378,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
-
-      sql_print_information("UpdateRow[%s:%d]", request->table().c_str(), request->handler());
 
       thd = handler_create_thd(request->thread());
       table = handler_find_or_open_table(thd, request->database().c_str(), request->table().c_str(), request->handler(), lock_type);
@@ -406,8 +404,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
-
-      sql_print_information("DeleteRow[%s:%d]", request->table().c_str(), request->handler());
 
       thd = handler_create_thd(request->thread());
       table = handler_find_or_open_table(thd, request->database().c_str(), request->table().c_str(), request->handler(), lock_type);
@@ -442,7 +438,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
         thd->mdl_context.release_transactional_locks();
       } else {
         trans_commit_stmt(thd, false);
-        mysql_unlock_tables(thd, thd->lock);
       }
       return grpc::Status::OK; 
     }
@@ -473,6 +468,51 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       return grpc::Status::OK; 
     }
+
+    ::grpc::Status ReplicateRow(::grpc::ServerContext* context, const ::spectrum::ReplicateRowRequest* request, ::spectrum::ReplicateRowResponse* response) {
+      THD *thd;
+      TABLE *table;
+      thr_lock_type lock_type = TL_WRITE;
+      uchar key[MAX_KEY_LENGTH];
+      int err;
+
+      thd = handler_create_thd(request->thread());
+      table = handler_find_or_open_table(thd, request->database().c_str(), request->table().c_str(), request->handler(), lock_type);
+      empty_record(table);
+
+      if (request->has_new_row()) {
+        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request->new_row());
+      } else {
+        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request->old_row());
+      }
+      key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
+      
+      table->reginfo.lock_type = lock_type;
+      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
+      if (request->has_old_row()) {
+        table->file->ha_index_init(table->s->primary_key, false);
+        table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT);
+        if (request->has_new_row()) {
+          spectrum_print_row("ReplicateRowOld", table, table->record[1]);
+          spectrum_print_row("ReplicateRowUpdate", table, table->record[0]);
+          err = table->file->ha_update_row(table->record[1], table->record[0]);
+        } else {
+          spectrum_print_row("ReplicateRowDelete", table, table->record[1]);
+          err = table->file->ha_delete_row(table->record[1]);
+        }
+        table->file->ha_index_end();
+      } else {
+        assert(request->has_new_row());
+        spectrum_print_row("ReplicateRowNew", table, table->record[0]);
+        err = table->file->ha_write_row(table->record[0]);
+      }
+      mysql_unlock_some_tables(thd, &table, 1);
+
+      if (err) {
+        sql_print_error("ReplicateRow[%s:%d]: error=%d", request->table().c_str(), request->handler(), err);
+      }
+      return grpc::Status::OK; 
+    }
 };
 
 struct spectrum_storage_plugin_context {
@@ -480,6 +520,10 @@ struct spectrum_storage_plugin_context {
 };
 
 PSI_memory_key key_memory_spectrum_storage_plugin_context;
+
+static char* get_spectrum_storage_node_port() {
+  return getenv("SPECTRUM_STORAGE_NODE_PORT");
+}
 
 /*
   Initialize the daemon example at server start or plugin installation.
@@ -508,7 +552,8 @@ static int daemon_example_plugin_init(void *p) {
     grpc::Service *service = new StorageNodeImpl();
     serverBuilder.RegisterService(service);
 
-    std::string server_address("0.0.0.0:64000");
+    std::string server_address("0.0.0.0:");
+    server_address.append(get_spectrum_storage_node_port());
     serverBuilder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
 
     con->server = serverBuilder.BuildAndStart();
