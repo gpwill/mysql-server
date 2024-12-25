@@ -4047,6 +4047,10 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
                                   uint version [[maybe_unused]]) {
   THD *thd = current_thd;
 
+  if (is_spectrum_compute()) {
+    return false;
+  }
+
   switch (dict_recovery_mode) {
     case DICT_RECOVERY_INITIALIZE_TABLESPACES:
       break;
@@ -4127,6 +4131,10 @@ static bool innobase_dict_recover(dict_recovery_mode_t dict_recovery_mode,
 
 /** DDL crash recovery: process the records recovered from "log_ddl" table */
 static void innobase_post_recover() {
+  if (is_spectrum_compute()) {
+    return;
+  }
+
   if (srv_force_recovery < SRV_FORCE_NO_TRX_UNDO) {
     DBUG_EXECUTE_IF("DDL_Log_remove_inject_startup_error_2",
                     srv_inject_too_many_concurrent_trxs = true;);

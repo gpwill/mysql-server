@@ -75,6 +75,8 @@
 #include "sql/thd_raii.h"
 #include "storage/perfschema/pfs_dd_version.h"  // PFS_DD_VERSION
 
+#include "spectrum.h"
+
 using namespace dd;
 
 ///////////////////////////////////////////////////////////////////////////
@@ -618,6 +620,10 @@ bool populate_tables(THD *thd) {
 
 // Re-populate character sets and collations upon normal restart.
 bool repopulate_charsets_and_collations(THD *thd) {
+  if (is_spectrum_compute()) {
+    return false;
+  }
+
   /*
     We must check if the DDSE is started in a way that makes the DD
     read only. For now, we only support InnoDB as SE for the DD. The call
