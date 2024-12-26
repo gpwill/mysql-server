@@ -31,8 +31,9 @@ message SystemVariables {
 }
 
 message Thread {
-  repeated MDL mdl_list = 1;
-  SystemVariables system_variables = 2;
+  int64 id = 1;
+  repeated MDL mdl_list = 2;
+  SystemVariables system_variables = 3;
 }
 
 message MDL {

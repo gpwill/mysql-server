@@ -52,6 +52,7 @@
 #include "sql/dd/cache/dictionary_client.h"
 #include "sql/dd/dd_schema.h"
 #include "sql/dd/impl/cache/shared_dictionary_cache.h" 
+#include "sql/mysqld_thd_manager.h"
 
 #include <spectrum.h>
 #include <grpc/grpc.h>
@@ -61,9 +62,22 @@
 
 char thread_stack = 'a';
 
+class Find_thd_with_spectrum_thread_id : public Find_THD_Impl {
+ public:
+  explicit Find_thd_with_spectrum_thread_id(uint64 spectrum_thread_id)
+      : m_spectrum_thread_id(spectrum_thread_id) {}
+  bool operator()(THD *thd) override {
+    if (thd->spectrum_thread_id == m_spectrum_thread_id) {
+      return true;
+    }
+    return false;
+  }
+ private:
+  const uint64 m_spectrum_thread_id;
+};
+
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
   private:
-    THD *current_thread = nullptr;
 
     THD *handler_create_thd(const spectrum::Thread &spectrum_thread)
     {
@@ -71,17 +85,24 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       my_thread_init();
 
-      if (!current_thread) {
-        sql_print_information("Creating new thread"); 
-
-        current_thread = new (std::nothrow) THD;
-
-        current_thread->get_protocol_classic()->init_net((Vio *)0);
-        current_thread->set_new_thread_id();
-        current_thread->thread_stack = reinterpret_cast<char *>(&thread_stack);
+      Find_thd_with_spectrum_thread_id find_thd_with_spectrum_thread_id(spectrum_thread.id());
+      THD_ptr thd_ptr = Global_THD_manager::get_instance()->find_thd(&find_thd_with_spectrum_thread_id);
+      THD *thd = thd_ptr.get();
+      if (!thd) {
+        thd = new (std::nothrow) THD;
+        thd->spectrum_thread_id = spectrum_thread.id();
+        thd->set_new_thread_id();
+        thd->thread_stack = reinterpret_cast<char *>(&thread_stack);
+        thd->get_protocol_classic()->init_net((Vio *)0);
+        Global_THD_manager::get_instance()->add_thd(thd);
+        sql_print_information("Created new thread: spectrum_thread_id=%d local_thread_id=%d",
+            spectrum_thread.id(), thd->thread_id()); 
+      } else {
+        sql_print_information("Found existing thread: spectrum_thread_id=%d local_thread_id=%d",
+            spectrum_thread.id(), thd->thread_id()); 
       }
-      current_thread->store_globals();
-      current_thread->variables.option_bits = spectrum_thread.system_variables().option_bits();
+      thd->store_globals();
+      thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
 
       for (unsigned int i = 0; i < spectrum_thread.mdl_list().size(); i++) {
         spectrum::MDL mdl = spectrum_thread.mdl_list()[i];   
@@ -98,10 +119,10 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
         MDL_request mdl_request;
         MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, static_cast<enum_mdl_type>(mdl.type()), static_cast<enum_mdl_duration>(mdl.duration()));
-        current_thread->mdl_context.acquire_lock(&mdl_request, 10000);
+        thd->mdl_context.acquire_lock(&mdl_request, 10000);
       }
 
-      return (current_thread);
+      return (thd);
     }
 
     TABLE *handler_open_table(

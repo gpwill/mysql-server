@@ -60,6 +60,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql/sql_class.h>
 #include <sql_table.h>
 #include <sql/handler.h>
+#include <sql/mysqld.h>
 
 #include <current_thd.h>
 #include <debug_sync.h>
@@ -138,16 +139,21 @@ void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_
   spectrum_thread->mutable_system_variables()->set_option_bits(thd->variables.option_bits);
 }
 
+void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread) {
+  spectrum_thread->set_id(thd->spectrum_thread_id);
+
+  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill_system_variables(thd, spectrum_thread);
+}
+
 int spectrum_compute_create_table(THD *thd, TABLE *table) {
   spectrum::CreateTableRequest request;
   spectrum::CreateTableResponse response;
   
-
   sql_print_information("spectrum_create_table[%s:%d]: satrt", table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -182,8 +188,7 @@ int spectrum_compute_lock_table(THD *thd, TABLE *table) {
   sql_print_information("spectrum_lock_table[%s:%d]: lock_type=%d", table->s->table_name.str, table->file, table->reginfo.lock_type);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -206,8 +211,7 @@ int spectrum_compute_unlock_table(THD *thd, TABLE *table) {
   sql_print_information("spectrum_unlock_table[%s:%d]", table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -230,8 +234,7 @@ int spectrum_compute_init_index(THD *thd, TABLE *table, uint index) {
   sql_print_information("spectrum_init_index[%s:%d]: index=%d", table->s->table_name.str, table->file, index);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -254,8 +257,7 @@ int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan) {
   sql_print_information("spectrum_init_rnd[%s:%d]: scan=%d", table->s->table_name.str, table->file, scan);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -278,8 +280,7 @@ int spectrum_compute_end_index(THD *thd, TABLE *table) {
   sql_print_information("spectrum_end_index[%s:%d]", table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -301,8 +302,7 @@ int spectrum_compute_end_rnd(THD *thd, TABLE *table) {
   sql_print_information("spectrum_end_rnd[%s:%d]", table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -329,8 +329,7 @@ int spectrum_compute_read_row(THD *thd, TABLE *table, uint index,
   assert(buf == table->record[0]);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -365,8 +364,7 @@ int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *bu
   assert(buf == table->record[0]);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -399,8 +397,7 @@ int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *bu
   assert(buf == table->record[0]);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -431,8 +428,7 @@ int spectrum_compute_replicate_row(THD *thd, TABLE *table, uchar *new_row, uchar
   spectrum_print_row("spectrum_replicate_row", table);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -459,8 +455,7 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
   spectrum_print_row("spectrum_write_row", table);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   spectrum_row_fill_fields(table, request.mutable_row());
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
@@ -494,8 +489,7 @@ int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record,
   spectrum_print_row("spectrum_update_row_old", table, (uchar *)old_record);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
@@ -524,8 +518,7 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
   spectrum_print_row("spectrum_delete_row", table, (uchar *)record);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   spectrum_row_fill_fields(table, (uchar *)record, request.mutable_row());
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
@@ -550,8 +543,7 @@ int spectrum_compute_commit(THD *thd, bool all, bool ignore_global_read_lock) {
   sql_print_information("spectrum_commit: all=%d, ignore_global_read_lock=%d", all, ignore_global_read_lock);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_all(all);
   request.set_ignore_global_read_lock(ignore_global_read_lock);
 
@@ -582,8 +574,7 @@ int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly) {
   sql_print_information("spectrum_begin_attachable_transaction: readonly=%d", readonly);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
   request.set_readonly(readonly);
 
   grpc::Status status = get_sotrage_client()->BeginAttachableTransaction(&context, request, &response);
@@ -602,8 +593,7 @@ int spectrum_compute_end_attachable_transaction(THD *thd) {
   sql_print_information("spectrum_end_attachable_transaction");
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
-  spectrum_thread_fill_system_variables(thd, spectrum_thread);
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
+  spectrum_thread_fill(thd, spectrum_thread);
 
   grpc::Status status = get_sotrage_client()->EndAttachableTransaction(&context, request, &response);
   if (!status.ok()) {

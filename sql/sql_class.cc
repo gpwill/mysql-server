@@ -1074,6 +1074,7 @@ void THD::init(void) {
     randominit(&rand,
                tmp + static_cast<ulong>(reinterpret_cast<uintptr_t>(&rand)),
                tmp + (ulong)::atomic_global_query_id);
+    spectrum_thread_id = tmp % 0x3FFFFFFFL;
   }
 
   server_status = SERVER_STATUS_AUTOCOMMIT;
