@@ -1076,6 +1076,7 @@ void THD::init(void) {
                tmp + (ulong)::atomic_global_query_id);
     spectrum_thread_id = tmp % 0x3FFFFFFFL;
   }
+  spectrum_compute_disabled = false;
 
   server_status = SERVER_STATUS_AUTOCOMMIT;
   if (variables.sql_mode & MODE_NO_BACKSLASH_ESCAPES)
@@ -2202,28 +2203,43 @@ void THD::restore_backup_open_tables_state(Open_tables_backup *backup) {
 }
 
 void THD::begin_attachable_ro_transaction() {
+  // Not call spectrum storage for any underlying operations, these operations will be performed
+  // through the following spectrum_compute_begin_attachable_transaction call.
+  spectrum_compute_disabled = true;
   m_attachable_trx = new Attachable_trx(this, m_attachable_trx);
+  spectrum_compute_disabled = false;
+
   if (is_spectrum_compute()) {
     spectrum_compute_begin_attachable_transaction(this, true);
   }
 }
 
 void THD::end_attachable_transaction() {
-  Attachable_trx *prev_trx = m_attachable_trx->get_prev_attachable_trx();
-  delete m_attachable_trx;
-  // Restore attachable transaction which was active before we started
-  // the one which just has ended. NULL in most cases.
-  m_attachable_trx = prev_trx;
-
   if (is_spectrum_compute()) {
     spectrum_compute_end_attachable_transaction(this);
   }
+
+  // Not call spectrum storage for any underlying operations, these operations was performed
+  // through the above spectrum_compute_end_attachable_transaction call.
+  spectrum_compute_disabled = true;
+  Attachable_trx *prev_trx = m_attachable_trx->get_prev_attachable_trx();
+  delete m_attachable_trx;
+  spectrum_compute_disabled = false;
+
+  // Restore attachable transaction which was active before we started
+  // the one which just has ended. NULL in most cases.
+  m_attachable_trx = prev_trx;
 }
 
 void THD::begin_attachable_rw_transaction() {
   assert(!m_attachable_trx);
 
+  // Not call spectrum storage for any underlying operations, these operations will be performed
+  // through the following spectrum_compute_begin_attachable_transaction call.
+  spectrum_compute_disabled = true;
   m_attachable_trx = new Attachable_trx_rw(this);
+  spectrum_compute_disabled = false;
+
   if (is_spectrum_compute()) {
     spectrum_compute_begin_attachable_transaction(this, false);
   }

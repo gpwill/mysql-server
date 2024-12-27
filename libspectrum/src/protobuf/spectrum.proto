@@ -6,6 +6,9 @@ service StorageNode {
   rpc BeginAttachableTransaction(BeginAttachableTransactionRequest) returns (BeginAttachableTransactionResponse) {}
   rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
 
+  rpc AcquireMetadataLock(AcquireMetadataLockRequest) returns (AcquireMetadataLockResponse) {}
+  rpc ReleaseMetadataLock(ReleaseMetadataLockRequest) returns (ReleaseMetadataLockResponse) {}
+
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
   rpc LockTable(LockTableRequest) returns (LockTableResponse) {}
   rpc UnlockTable(UnlockTableRequest) returns (UnlockTableResponse) {}
@@ -32,17 +35,7 @@ message SystemVariables {
 
 message Thread {
   int64 id = 1;
-  repeated MDL mdl_list = 2;
-  SystemVariables system_variables = 3;
-}
-
-message MDL {
-  int32 namespace = 1;
-  string schema = 2;
-  string table = 3;
-  string column = 4;
-  int32 type = 5;
-  int32 duration = 6;
+  SystemVariables system_variables = 2;
 }
 
 message Row {
@@ -55,6 +48,29 @@ message Field {
   string name = 1;
   bytes value = 2;
   bool is_null = 3;
+}
+
+message AcquireMetadataLockRequest {
+  Thread thread = 1;
+  int32 namespace = 2;
+  string schema = 3;
+  string table = 4;
+  string column = 5;
+  int32 type = 6;
+  int32 duration = 7;
+  int32 ticket_number = 8;
+}
+
+message AcquireMetadataLockResponse {
+}
+
+message ReleaseMetadataLockRequest {
+  Thread thread = 1;
+  int32 duration = 2;
+  int32 ticket_number = 3;
+}
+
+message ReleaseMetadataLockResponse {
 }
 
 message CreateTableRequest {

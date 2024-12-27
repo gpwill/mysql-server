@@ -97,31 +97,9 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
         Global_THD_manager::get_instance()->add_thd(thd);
         sql_print_information("Created new thread: spectrum_thread_id=%d local_thread_id=%d",
             spectrum_thread.id(), thd->thread_id()); 
-      } else {
-        sql_print_information("Found existing thread: spectrum_thread_id=%d local_thread_id=%d",
-            spectrum_thread.id(), thd->thread_id()); 
       }
       thd->store_globals();
       thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
-
-      for (unsigned int i = 0; i < spectrum_thread.mdl_list().size(); i++) {
-        spectrum::MDL mdl = spectrum_thread.mdl_list()[i];   
-        
-        //sql_print_information("MDL: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d",
-        //  mdl.namespace_(), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str(), mdl.type(), mdl.duration()); 
-        
-        MDL_key mdl_key;
-        if (mdl.column().length()) {
-          mdl_key.mdl_key_init(static_cast<MDL_key::enum_mdl_namespace>(mdl.namespace_()), mdl.schema().c_str(), mdl.table().c_str(), mdl.column().c_str());
-        } else {
-          mdl_key.mdl_key_init(static_cast<MDL_key::enum_mdl_namespace>(mdl.namespace_()), mdl.schema().c_str(), mdl.table().c_str());
-        }
-
-        MDL_request mdl_request;
-        MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, static_cast<enum_mdl_type>(mdl.type()), static_cast<enum_mdl_duration>(mdl.duration()));
-        thd->mdl_context.acquire_lock(&mdl_request, 10000);
-      }
-
       return (thd);
     }
 
@@ -221,7 +199,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table = handler_find_or_open_table(thd, db_name, table_name, handler_id, lock_type);
 
       table->reginfo.lock_type = lock_type;
-      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
+      MYSQL_LOCK *lock = mysql_lock_tables(thd, &table, 1, 0);
+      thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
 
       return grpc::Status::OK; 
     }
@@ -456,7 +435,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
         trans_commit_attachable(thd);
       } else if (request->all()) {
         trans_commit(thd, false);
-        thd->mdl_context.release_transactional_locks();
+        //thd->mdl_context.release_transactional_locks();
       } else {
         trans_commit_stmt(thd, false);
       }
@@ -486,6 +465,58 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       thd = handler_create_thd(request->thread());
 
       thd->end_attachable_transaction();
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status AcquireMetadataLock(::grpc::ServerContext* context, const ::spectrum::AcquireMetadataLockRequest* request, ::spectrum::AcquireMetadataLockResponse* response) {
+      THD *thd;
+      MDL_key::enum_mdl_namespace namespace_ = static_cast<MDL_key::enum_mdl_namespace>(request->namespace_());
+      const std::string& schema = request->schema();
+      const std::string& table = request->table();
+      const std::string& column = request->column();
+      enum_mdl_type type = static_cast<enum_mdl_type>(request->type());
+      enum_mdl_duration duration = static_cast<enum_mdl_duration>(request->duration());
+      int32_t ticket_number = request->ticket_number();
+
+      sql_print_information("AcquireMetadataLock: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d, ticket_number=%d",
+          namespace_, schema.c_str(), table.c_str(), column.c_str(), type, duration, ticket_number); 
+
+      thd = handler_create_thd(request->thread());
+  
+      MDL_key mdl_key;
+      if (column.length()) {
+        mdl_key.mdl_key_init(namespace_, schema.c_str(), table.c_str(), column.c_str());
+      } else {
+        mdl_key.mdl_key_init(namespace_, schema.c_str(), table.c_str());
+      }
+
+      MDL_request mdl_request;
+      MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, type, duration);
+      thd->mdl_context.acquire_lock(&mdl_request, 10000);
+      mdl_request.ticket->ticket_number = ticket_number;
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status ReleaseMetadataLock(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLockRequest* request, ::spectrum::ReleaseMetadataLockResponse* response) {
+      THD *thd;
+      enum_mdl_duration duration = static_cast<enum_mdl_duration>(request->duration());
+      int32_t ticket_number = request->ticket_number();
+
+      sql_print_information("ReleaseMetadataLock: duration=%d, ticket_number=%d", duration, ticket_number);
+
+      thd = handler_create_thd(request->thread());
+
+      MDL_ticket *ticket = nullptr;
+      MDL_context::Ticket_iterator ticket_it = thd->mdl_context.get_tickets_for_duration(duration);
+      for (ticket = ticket_it++; ticket != nullptr; ticket = ticket_it++) {
+        if (ticket->ticket_number == ticket_number) {
+          break;
+        }
+      }
+      if (ticket) {
+        thd->mdl_context.release_lock(duration, ticket);
+      }
 
       return grpc::Status::OK; 
     }

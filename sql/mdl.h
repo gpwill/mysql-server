@@ -998,6 +998,7 @@ class MDL_ticket : public MDL_wait_for_subgraph {
   MDL_ticket **prev_in_lock;
 
  public:
+  uint32 ticket_number;
   bool has_pending_conflicting_lock() const;
 
   MDL_context *get_ctx() const { return m_ctx; }
@@ -1448,6 +1449,7 @@ class MDL_context {
   void release_all_locks_for_name(MDL_ticket *ticket);
   void release_locks(MDL_release_locks_visitor *visitor);
   void release_lock(MDL_ticket *ticket);
+  void release_lock(enum_mdl_duration duration, MDL_ticket *ticket);
 
   bool owns_equal_or_stronger_lock(const MDL_key *mdl_key,
                                    enum_mdl_type mdl_type);
@@ -1570,6 +1572,8 @@ class MDL_context {
   */
   MDL_wait m_wait;
 
+  uint32 next_ticket_number;
+
  private:
   /**
     Lists of all MDL tickets acquired by this connection.
@@ -1668,7 +1672,6 @@ class MDL_context {
   MDL_ticket *find_ticket(MDL_request *mdl_req, enum_mdl_duration *duration);
   void release_locks_stored_before(enum_mdl_duration duration,
                                    MDL_ticket *sentinel);
-  void release_lock(enum_mdl_duration duration, MDL_ticket *ticket);
   bool try_acquire_lock_impl(MDL_request *mdl_request, MDL_ticket **out_ticket);
   void materialize_fast_path_locks();
 

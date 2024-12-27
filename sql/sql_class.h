@@ -2459,6 +2459,7 @@ class THD : public MDL_context_owner,
   ulong rand_saved_seed1, rand_saved_seed2;
   my_thread_t real_id;
   uint64 spectrum_thread_id;
+  bool spectrum_compute_disabled;
   /**
     This counter is 32 bit because of the client protocol.
 

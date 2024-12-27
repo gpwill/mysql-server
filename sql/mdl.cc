@@ -58,6 +58,11 @@ extern MYSQL_PLUGIN_IMPORT CHARSET_INFO *system_charset_info;
 
 static PSI_memory_key key_memory_MDL_context_acquire_locks;
 
+extern bool is_spectrum_compute();
+extern bool is_spectrum_storage_replica();
+extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket* ticket);
+extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
+
 #ifdef HAVE_PSI_INTERFACE
 static PSI_mutex_key key_MDL_wait_LOCK_wait_status;
 
@@ -1440,6 +1445,7 @@ MDL_context::MDL_context()
       m_waiting_for(nullptr),
       m_pins(nullptr),
       m_rand_state(UINT_MAX32) {
+  next_ticket_number = 1;
   mysql_prlock_init(key_MDL_context_LOCK_waiting_for, &m_LOCK_waiting_for);
 }
 
@@ -3035,6 +3041,9 @@ retry:
     ticket->m_is_fast_path = true;
     m_ticket_store.push_front(mdl_request->duration, ticket);
     mdl_request->ticket = ticket;
+    if (is_spectrum_compute()) {
+      spectrum_compute_acquire_mdl(get_thd(), ticket);
+    }
 
     mysql_mdl_set_status(ticket->m_psi, MDL_ticket::GRANTED);
     return false;
@@ -3148,6 +3157,9 @@ slow_path:
 
     m_ticket_store.push_front(mdl_request->duration, ticket);
     mdl_request->ticket = ticket;
+    if (is_spectrum_compute()) {
+      spectrum_compute_acquire_mdl(get_thd(), ticket);
+    }
 
     mysql_mdl_set_status(ticket->m_psi, MDL_ticket::GRANTED);
   } else
@@ -3585,6 +3597,9 @@ bool MDL_context::acquire_lock(MDL_request *mdl_request,
 
   m_ticket_store.push_front(mdl_request->duration, ticket);
   mdl_request->ticket = ticket;
+  if (is_spectrum_compute()) {
+    spectrum_compute_acquire_mdl(get_thd(), ticket);
+  }
 
   mysql_mdl_set_status(ticket->m_psi, MDL_ticket::GRANTED);
 
@@ -4105,6 +4120,10 @@ void MDL_context::release_lock(enum_mdl_duration duration, MDL_ticket *ticket) {
   // when Ticket_store uses hash-based secondary index.
   m_ticket_store.remove(duration, ticket);
 
+  if (is_spectrum_compute()) {
+    spectrum_compute_release_mdl(get_thd(), duration, ticket->ticket_number);
+  }
+
   /*
     If lock we are about to release requires post-release notification
     of SEs, we need to save its MDL_key on stack. This is necessary to
@@ -4374,6 +4393,11 @@ void MDL_ticket::downgrade_lock(enum_mdl_type new_type) {
 
 bool MDL_context::owns_equal_or_stronger_lock(const MDL_key *mdl_key,
                                               enum_mdl_type mdl_type) {
+  // Bypass mdl check for spectrum storage replica
+  if (is_spectrum_storage_replica()) {
+    return true;
+  }
+
   MDL_request mdl_request;
   enum_mdl_duration not_used;
   /* We don't care about exact duration of lock here. */
@@ -4403,6 +4427,11 @@ bool MDL_context::owns_equal_or_stronger_lock(const MDL_key *mdl_key,
 bool MDL_context::owns_equal_or_stronger_lock(
     MDL_key::enum_mdl_namespace mdl_namespace, const char *db, const char *name,
     enum_mdl_type mdl_type) {
+  // Bypass mdl check for spectrum storage replica
+  if (is_spectrum_storage_replica()) {
+    return true;
+  }
+
   MDL_request mdl_request;
   enum_mdl_duration not_used;
   /* We don't care about exact duration of lock here. */

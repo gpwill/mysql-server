@@ -23,25 +23,15 @@
 
 #include<stdlib.h>
 
+#include "sql/table.h"
+
 #include "spectrum.grpc.pb.h"
 
 extern bool spectrum_debug;
 
-inline bool is_spectrum_compute() {
-  char* env = getenv("SPECTRUM_COMPUTE_NODE");
-  if (env != nullptr) {
-    return true;
-  }
-  return false;
-}
-
-inline bool is_spectrum_storage() {
-  char* env = getenv("SPECTRUM_STORAGE_NODE");
-  if (env != nullptr) {
-    return true;
-  }
-  return false;
-}
+extern bool is_spectrum_compute();
+extern bool is_spectrum_storage();
+extern bool is_spectrum_storage_replica();
 
 extern void spectrum_print_row(char* method, TABLE* table);
 extern void spectrum_print_row(char* method, TABLE* table, uchar* record);
@@ -67,5 +57,7 @@ extern int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *reco
 extern int spectrum_compute_commit(THD *thd, bool all, bool ignore_global_read_lock);
 extern int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly);
 extern int spectrum_compute_end_attachable_transaction(THD *thd);
+extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket);
+extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
 
 #endif

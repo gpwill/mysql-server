@@ -104,37 +104,6 @@ spectrum::StorageNode::Stub* get_sotrage_replica_client() {
   return storage_replica_client.get();
 }
 
-void spectrum_thread_fill_mdl_list_for_duration(THD *thd, spectrum::Thread *spectrum_thread, enum_mdl_duration duration) {
-  MDL_context::Ticket_iterator it = thd->mdl_context.get_tickets_for_duration(duration);
-  for (MDL_ticket *t = it++; t != nullptr; t = it++) {
-    //sql_print_information("MDL ticket: namespace=%d, db=%s, name=%s, column=%s, type=%d, duration=%d",
-    //  t->get_key()->mdl_namespace(), t->get_key()->db_name(), t->get_key()->name(), t->get_key()->col_name(), t->get_type(), duration);
-
-    spectrum::MDL *spectrum_mdl = spectrum_thread->add_mdl_list();
-    if (t->get_key()->mdl_namespace()) {
-      spectrum_mdl->set_namespace_(t->get_key()->mdl_namespace());
-    }
-    if (t->get_key()->db_name()) {
-      spectrum_mdl->set_schema(t->get_key()->db_name());
-    }
-    if (t->get_key()->name()) {
-      spectrum_mdl->set_table(t->get_key()->name());
-    }
-    if (t->get_key()->col_name()) {
-      spectrum_mdl->set_column(t->get_key()->col_name());
-    }
-    if (t->get_type()) {
-      spectrum_mdl->set_type(t->get_type());
-    }
-    spectrum_mdl->set_duration(duration);
-  }
-}
-
-void spectrum_thread_fill_mdl_list(THD *thd, spectrum::Thread *spectrum_thread) {
-  spectrum_thread_fill_mdl_list_for_duration(thd, spectrum_thread, enum_mdl_duration::MDL_TRANSACTION);
-  spectrum_thread_fill_mdl_list_for_duration(thd, spectrum_thread, enum_mdl_duration::MDL_STATEMENT);
-}
-
 void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_thread) {
   spectrum_thread->mutable_system_variables()->set_option_bits(thd->variables.option_bits);
 }
@@ -142,13 +111,16 @@ void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_
 void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread) {
   spectrum_thread->set_id(thd->spectrum_thread_id);
 
-  spectrum_thread_fill_mdl_list(thd, spectrum_thread);
   spectrum_thread_fill_system_variables(thd, spectrum_thread);
 }
 
 int spectrum_compute_create_table(THD *thd, TABLE *table) {
   spectrum::CreateTableRequest request;
   spectrum::CreateTableResponse response;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
   
   sql_print_information("spectrum_create_table[%s:%d]: satrt", table->s->table_name.str, table->file);
 
@@ -185,6 +157,10 @@ int spectrum_compute_lock_table(THD *thd, TABLE *table) {
   spectrum::LockTableResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   sql_print_information("spectrum_lock_table[%s:%d]: lock_type=%d", table->s->table_name.str, table->file, table->reginfo.lock_type);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -207,6 +183,10 @@ int spectrum_compute_unlock_table(THD *thd, TABLE *table) {
   spectrum::UnlockTableRequest request;
   spectrum::UnlockTableResponse response;
   grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   sql_print_information("spectrum_unlock_table[%s:%d]", table->s->table_name.str, table->file);
 
@@ -231,6 +211,10 @@ int spectrum_compute_init_index(THD *thd, TABLE *table, uint index) {
   spectrum::InitIndexResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   sql_print_information("spectrum_init_index[%s:%d]: index=%d", table->s->table_name.str, table->file, index);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -253,6 +237,10 @@ int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan) {
   spectrum::InitRndRequest request;
   spectrum::InitRndResponse response;
   grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   sql_print_information("spectrum_init_rnd[%s:%d]: scan=%d", table->s->table_name.str, table->file, scan);
 
@@ -277,6 +265,10 @@ int spectrum_compute_end_index(THD *thd, TABLE *table) {
   spectrum::EndIndexResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   sql_print_information("spectrum_end_index[%s:%d]", table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -298,6 +290,10 @@ int spectrum_compute_end_rnd(THD *thd, TABLE *table) {
   spectrum::EndRndRequest request;
   spectrum::EndRndResponse response;
   grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   sql_print_information("spectrum_end_rnd[%s:%d]", table->s->table_name.str, table->file);
 
@@ -325,6 +321,10 @@ int spectrum_compute_read_row(THD *thd, TABLE *table, uint index,
   spectrum::ReadRowRequest request;
   spectrum::ReadRowResponse response;
   grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   assert(buf == table->record[0]);
 
@@ -361,6 +361,10 @@ int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *bu
   spectrum::ReadNextRowResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   assert(buf == table->record[0]);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -394,6 +398,10 @@ int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *bu
   spectrum::ReadPrevRowResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   assert(buf == table->record[0]);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -425,6 +433,10 @@ int spectrum_compute_replicate_row(THD *thd, TABLE *table, uchar *new_row, uchar
   spectrum::ReplicateRowResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   spectrum_print_row("spectrum_replicate_row", table);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -449,6 +461,10 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
   spectrum::WriteRowRequest request;
   spectrum::WriteRowResponse response;
   grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   assert(record == table->record[0]);
 
@@ -481,6 +497,10 @@ int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record,
   spectrum::UpdateRowRequest request;
   spectrum::UpdateRowResponse response;
   grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   assert(new_record == table->record[0]);
   assert(old_record == table->record[1]);
@@ -515,6 +535,10 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
   spectrum::DeleteRowResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   spectrum_print_row("spectrum_delete_row", table, (uchar *)record);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -539,6 +563,10 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
 int spectrum_compute_commit(THD *thd, bool all, bool ignore_global_read_lock) {
   spectrum::CommitRequest request;
   spectrum::CommitResponse response;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
 
   sql_print_information("spectrum_commit: all=%d, ignore_global_read_lock=%d", all, ignore_global_read_lock);
 
@@ -571,6 +599,10 @@ int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly) {
   spectrum::BeginAttachableTransactionResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   sql_print_information("spectrum_begin_attachable_transaction: readonly=%d", readonly);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -590,6 +622,10 @@ int spectrum_compute_end_attachable_transaction(THD *thd) {
   spectrum::EndAttachableTransactionResponse response;
   grpc::ClientContext context;
 
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
   sql_print_information("spectrum_end_attachable_transaction");
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
@@ -598,6 +634,67 @@ int spectrum_compute_end_attachable_transaction(THD *thd) {
   grpc::Status status = get_sotrage_client()->EndAttachableTransaction(&context, request, &response);
   if (!status.ok()) {
     sql_print_error("spectrum_end_attachable_transaction: error=%s", status.error_message().c_str());
+    assert(false);
+  }
+  return 0;
+}
+
+int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket) {
+  spectrum::AcquireMetadataLockRequest request;
+  spectrum::AcquireMetadataLockResponse response;
+  grpc::ClientContext context;
+  const MDL_key *mdl_key = ticket->get_key();
+  enum_mdl_duration duration = ticket->get_duration();
+  enum_mdl_type type = ticket->get_type();
+  int32 ticket_number = ticket->get_ctx()->next_ticket_number++;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_compute_acquire_mdl: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d, ticket_number=%d",
+      mdl_key->mdl_namespace(), mdl_key->db_name(), mdl_key->name(), mdl_key->col_name(), type, duration, ticket_number);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_namespace_(mdl_key->mdl_namespace());
+  if (mdl_key->db_name()) request.set_schema(mdl_key->db_name());
+  if (mdl_key->name()) request.set_table(mdl_key->name());
+  if (mdl_key->col_name()) request.set_column(mdl_key->col_name());
+  request.set_type(type);
+  request.set_duration(duration);
+  request.set_ticket_number(ticket_number);
+
+  grpc::Status status = get_sotrage_client()->AcquireMetadataLock(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_compute_acquire_mdl: error=%s", status.error_message().c_str());
+    assert(false);
+  }
+
+  ticket->ticket_number = ticket_number;
+  return 0;
+}
+
+int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number) {
+  spectrum::ReleaseMetadataLockRequest request;
+  spectrum::ReleaseMetadataLockResponse response;
+  grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_compute_release_mdl: duration=%d, ticket_number=%d",
+      duration, ticket_number);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_duration(duration);
+  request.set_ticket_number(ticket_number);
+
+  grpc::Status status = get_sotrage_client()->ReleaseMetadataLock(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_compute_release_mdl: error=%s", status.error_message().c_str());
     assert(false);
   }
   return 0;

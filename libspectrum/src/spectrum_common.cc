@@ -51,6 +51,30 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <grpc/grpc.h>
 #include "spectrum.h"
 
+bool is_spectrum_compute() {
+  char* env = getenv("SPECTRUM_COMPUTE_NODE");
+  if (env != nullptr) {
+    return true;
+  }
+  return false;
+}
+
+bool is_spectrum_storage() {
+  char* env = getenv("SPECTRUM_STORAGE_NODE");
+  if (env != nullptr) {
+    return true;
+  }
+  return false;
+}
+
+bool is_spectrum_storage_replica() {
+  char* env = getenv("SPECTRUM_STORAGE_REPLICA_NODE");
+  if (env != nullptr) {
+    return true;
+  }
+  return false;
+}
+
 void spectrum_print_row(char* method, TABLE* table) {
   spectrum_print_row(method, table, table->record[0]);
 }
