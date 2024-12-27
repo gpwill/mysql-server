@@ -39,6 +39,7 @@ extern void spectrum_row_fill_fields(TABLE* table, ::spectrum::Row *spectrum_row
 extern void spectrum_row_fill_fields(TABLE* table, uchar* record, ::spectrum::Row *spectrum_row);
 extern void spectrum_row_extract_fields(TABLE *table, ::spectrum::Row *spectrum_row);
 extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum::Row *spectrum_row);
+extern void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread);
 
 extern int spectrum_compute_create_table(THD *thd, TABLE *table);
 extern int spectrum_compute_lock_table(THD *thd, TABLE *table);
@@ -59,5 +60,9 @@ extern int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly
 extern int spectrum_compute_end_attachable_transaction(THD *thd);
 extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket);
 extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
+
+extern int spectrum_log_create_table(THD *thd, TABLE *table);
+extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
+extern int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock);
 
 #endif

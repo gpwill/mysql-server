@@ -44,6 +44,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include <string>
 
+#include <sql/sql_class.h>
 #include <sql/field.h>
 #include <sql/table.h>
 #include <sql/log.h>
@@ -73,6 +74,16 @@ bool is_spectrum_storage_replica() {
     return true;
   }
   return false;
+}
+
+void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_thread) {
+  spectrum_thread->mutable_system_variables()->set_option_bits(thd->variables.option_bits);
+}
+
+void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread) {
+  spectrum_thread->set_id(thd->spectrum_thread_id);
+
+  spectrum_thread_fill_system_variables(thd, spectrum_thread);
 }
 
 void spectrum_print_row(char* method, TABLE* table) {
