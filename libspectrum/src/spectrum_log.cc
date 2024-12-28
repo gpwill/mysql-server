@@ -104,7 +104,6 @@ int spectrum_log_create_table(THD *thd, TABLE *table) {
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
-  request.set_lock_type(table->reginfo.lock_type);
 
   grpc::ClientContext context;
   grpc::Status status = get_storage_replica_client()->CreateTable(&context, request, &response);
@@ -129,6 +128,7 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
   if (new_row) spectrum_row_fill_fields(table, new_row, request.mutable_new_row());
   if (old_row) spectrum_row_fill_fields(table, old_row, request.mutable_old_row());

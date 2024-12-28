@@ -110,7 +110,6 @@ int spectrum_compute_create_table(THD *thd, TABLE *table) {
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
-  request.set_lock_type(table->reginfo.lock_type);
 
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->CreateTable(&context, request, &response);
@@ -142,6 +141,7 @@ int spectrum_compute_lock_table(THD *thd, TABLE *table) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
   grpc::Status status = get_storage_client()->LockTable(&context, request, &response);
   if (!status.ok()) {
@@ -169,6 +169,7 @@ int spectrum_compute_unlock_table(THD *thd, TABLE *table) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
   grpc::Status status = get_storage_client()->UnlockTable(&context, request, &response);
   if (!status.ok()) {
@@ -196,6 +197,7 @@ int spectrum_compute_init_index(THD *thd, TABLE *table, uint index) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_index(index);
 
   grpc::Status status = get_storage_client()->InitIndex(&context, request, &response);
@@ -223,6 +225,7 @@ int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_scan(scan);
 
   grpc::Status status = get_storage_client()->InitRnd(&context, request, &response);
@@ -250,6 +253,7 @@ int spectrum_compute_end_index(THD *thd, TABLE *table) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
   grpc::Status status = get_storage_client()->EndIndex(&context, request, &response);
   if (!status.ok()) {
@@ -276,6 +280,7 @@ int spectrum_compute_end_rnd(THD *thd, TABLE *table) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
   grpc::Status status = get_storage_client()->EndRnd(&context, request, &response);
   if (!status.ok()) {
@@ -307,6 +312,7 @@ int spectrum_compute_read_row(THD *thd, TABLE *table, uint index,
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_index(index);
   request.mutable_key()->assign((const char *)key_ptr, key_len);
   request.set_key_len(key_len);
@@ -346,6 +352,7 @@ int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *bu
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_index(index);
   request.set_same(same);
 
@@ -383,6 +390,7 @@ int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *bu
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_index(index);
 
   grpc::Status status = get_storage_client()->ReadPrevRow(&context, request, &response);
@@ -421,6 +429,7 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_autoinc_field_has_explicit_non_null_value(table->autoinc_field_has_explicit_non_null_value);
 
   grpc::Status status = get_storage_client()->WriteRow(&context, request, &response);
@@ -458,6 +467,7 @@ int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record,
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
   request.set_autoinc_field_has_explicit_non_null_value(table->autoinc_field_has_explicit_non_null_value);
   
   spectrum_row_fill_fields(table, table->record[0], request.mutable_new_row());
@@ -492,6 +502,7 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);
   request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
   grpc::Status status = get_storage_client()->DeleteRow(&context, request, &response);
   if (!status.ok()) {

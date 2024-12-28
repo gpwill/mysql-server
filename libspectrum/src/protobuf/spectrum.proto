@@ -78,7 +78,6 @@ message CreateTableRequest {
   string database = 2;
   string table = 3;
   int64 handler = 4;
-  int32 lock_type = 5;
 }
 
 message CreateTableResponse {
@@ -90,7 +89,8 @@ message LockTableRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  bool start_stmt = 6;
+  int32 lock_action = 6;
+  bool start_stmt = 7;
 }
 
 message UnlockTableResponse {
@@ -102,6 +102,7 @@ message UnlockTableRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
+  int32 lock_action = 6;
 }
 
 message LockTableResponse {
@@ -113,7 +114,8 @@ message InitIndexRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  int32 index = 6;
+  int32 lock_action = 6;
+  int32 index = 7;
 }
 
 message InitIndexResponse {
@@ -125,6 +127,7 @@ message EndIndexRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
+  int32 lock_action = 6;
 }
 
 message EndIndexResponse {
@@ -136,7 +139,8 @@ message InitRndRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  bool scan = 6;
+  int32 lock_action = 6;
+  bool scan = 7;
 }
 
 message InitRndResponse {
@@ -148,6 +152,7 @@ message EndRndRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
+  int32 lock_action = 6;
 }
 
 message EndRndResponse {
@@ -159,12 +164,13 @@ message ReadRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  int32 index = 6;
-  bytes key = 7;
-  int32 key_len = 8;
-  int32 find_flag = 9;
-  int32 init = 10;
-  bool init_scan = 11;
+  int32 lock_action = 6;
+  int32 index = 7;
+  bytes key = 8;
+  int32 key_len = 9;
+  int32 find_flag = 10;
+  int32 init = 11;
+  bool init_scan = 12;
 }
 
 message ReadRowResponse {
@@ -177,10 +183,11 @@ message ReadNextRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  int32 index = 6;
-  int32 same = 7;
-  int32 init = 8;
-  bool init_scan = 9;
+  int32 lock_action = 6;
+  int32 index = 7;
+  int32 same = 8;
+  int32 init = 9;
+  bool init_scan = 10;
 }
 
 message ReadNextRowResponse {
@@ -193,9 +200,10 @@ message ReadPrevRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  int32 index = 6;
-  int32 init = 7;
-  bool init_scan = 8;
+  int32 lock_action = 6;
+  int32 index = 7;
+  int32 init = 8;
+  bool init_scan = 9;
 }
 
 message ReadPrevRowResponse {
@@ -208,8 +216,9 @@ message WriteRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  Row row = 6;
-  bool autoinc_field_has_explicit_non_null_value = 7;
+  int32 lock_action = 6;
+  Row row = 7;
+  bool autoinc_field_has_explicit_non_null_value = 8;
 }
 
 message WriteRowResponse {
@@ -223,9 +232,10 @@ message UpdateRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  Row new_row = 6;
-  Row old_row = 7;
-  bool autoinc_field_has_explicit_non_null_value = 8;
+  int32 lock_action = 6;
+  Row new_row = 7;
+  Row old_row = 8;
+  bool autoinc_field_has_explicit_non_null_value = 9;
 }
 
 message UpdateRowResponse {
@@ -237,7 +247,8 @@ message DeleteRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  Row row = 6;
+  int32 lock_action = 6;
+  Row row = 7;
 }
 
 message DeleteRowResponse {
@@ -273,8 +284,9 @@ message ReplicateRowRequest {
   string table = 3;
   int64 handler = 4;
   int32 lock_type = 5;
-  Row new_row = 6;
-  Row old_row = 7;
+  int32 lock_action = 6;
+  Row new_row = 7;
+  Row old_row = 8;
 }
 
 message ReplicateRowResponse {
