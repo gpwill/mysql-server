@@ -9,6 +9,7 @@ service StorageNode {
   rpc AcquireMetadataLock(AcquireMetadataLockRequest) returns (AcquireMetadataLockResponse) {}
   rpc UpgradeMetadataLock(UpgradeMetadataLockRequest) returns (UpgradeMetadataLockResponse) {}
   rpc ReleaseMetadataLock(ReleaseMetadataLockRequest) returns (ReleaseMetadataLockResponse) {}
+  rpc ReleaseMetadataLocks(ReleaseMetadataLocksRequest) returns (ReleaseMetadataLocksResponse) {}
 
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
   rpc LockTable(LockTableRequest) returns (LockTableResponse) {}
@@ -82,6 +83,14 @@ message ReleaseMetadataLockRequest {
 }
 
 message ReleaseMetadataLockResponse {
+}
+
+message ReleaseMetadataLocksRequest {
+  Thread thread = 1;
+  bool transactional = 2;
+}
+
+message ReleaseMetadataLocksResponse {
 }
 
 message CreateTableRequest {

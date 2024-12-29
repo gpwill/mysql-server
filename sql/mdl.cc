@@ -65,6 +65,7 @@ extern void enable_spectrum_compute(THD *thd);
 extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket* ticket);
 extern int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket* ticket, enum_mdl_type new_type);
 extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
+extern int spectrum_compute_release_mdls(THD *thd, bool transactional);
 
 #ifdef HAVE_PSI_INTERFACE
 static PSI_mutex_key key_MDL_wait_LOCK_wait_status;
@@ -4544,13 +4545,29 @@ void MDL_context::rollback_to_savepoint(const MDL_savepoint &mdl_savepoint) {
 
 void MDL_context::release_transactional_locks() {
   DBUG_TRACE;
+
+  THD* thd = get_thd();
+  disable_spectrum_compute(thd);
   release_locks_stored_before(MDL_STATEMENT, nullptr);
   release_locks_stored_before(MDL_TRANSACTION, nullptr);
+  enable_spectrum_compute(thd);
+
+  if (is_spectrum_compute()) {
+    spectrum_compute_release_mdls(thd, true);
+  }
 }
 
 void MDL_context::release_statement_locks() {
   DBUG_TRACE;
+
+  THD* thd = get_thd();
+  disable_spectrum_compute(thd);
   release_locks_stored_before(MDL_STATEMENT, nullptr);
+  enable_spectrum_compute(thd);
+
+  if (is_spectrum_compute()) {
+    spectrum_compute_release_mdls(thd, false);
+  }
 }
 
 /**

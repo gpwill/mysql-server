@@ -558,6 +558,23 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
+    ::grpc::Status ReleaseMetadataLocks(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLocksRequest* request, ::spectrum::ReleaseMetadataLocksResponse* response) {
+      THD *thd;
+      bool transactional = request->transactional();
+
+      sql_print_information("ReleaseMetadataLocks: transactional=%d", transactional);
+
+      thd = handler_create_thd(request->thread());
+
+      if (transactional) {
+        thd->mdl_context.release_transactional_locks();
+      } else {
+        thd->mdl_context.release_statement_locks();
+      }
+
+      return grpc::Status::OK; 
+    }
+
     ::grpc::Status ReplicateRow(::grpc::ServerContext* context, const ::spectrum::ReplicateRowRequest* request, ::spectrum::ReplicateRowResponse* response) {
       THD *thd;
       TABLE *table;

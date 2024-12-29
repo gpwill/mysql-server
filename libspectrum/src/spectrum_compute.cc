@@ -676,3 +676,26 @@ int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 tic
   }
   return 0;
 }
+
+int spectrum_compute_release_mdls(THD *thd, bool transactional) {
+  spectrum::ReleaseMetadataLocksRequest request;
+  spectrum::ReleaseMetadataLocksResponse response;
+  grpc::ClientContext context;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_compute_release_mdls: transactional=%d", transactional);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_transactional(transactional);
+
+  grpc::Status status = get_storage_client()->ReleaseMetadataLocks(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_compute_release_mdls: error=%s", status.error_message().c_str());
+    assert(false);
+  }
+  return 0;
+}

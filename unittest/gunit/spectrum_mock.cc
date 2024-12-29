@@ -70,3 +70,7 @@ int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket* ticket, enum_mdl_type new
 int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number) {
   return 0;
 }
+
+int spectrum_compute_release_mdls(THD *thd, bool transactional) {
+  return 0;
+}
