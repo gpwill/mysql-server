@@ -623,6 +623,35 @@ int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket) {
   return 0;
 }
 
+int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket *ticket, enum_mdl_type new_type) {
+  spectrum::UpgradeMetadataLockRequest request;
+  spectrum::UpgradeMetadataLockResponse response;
+  grpc::ClientContext context;
+  enum_mdl_duration duration = ticket->get_duration();
+  int32 ticket_number = ticket->ticket_number;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_compute_upgrade_mdl: duration=%d, ticket_number=%d, new_type=%d",
+      duration, ticket_number, new_type);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_duration(duration);
+  request.set_ticket_number(ticket_number);
+  request.set_new_type(new_type);
+
+  grpc::Status status = get_storage_client()->UpgradeMetadataLock(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_compute_upgrade_mdl: error=%s", status.error_message().c_str());
+    assert(false);
+  }
+
+  return 0;
+}
+
 int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number) {
   spectrum::ReleaseMetadataLockRequest request;
   spectrum::ReleaseMetadataLockResponse response;

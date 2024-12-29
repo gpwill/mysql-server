@@ -2205,9 +2205,9 @@ void THD::restore_backup_open_tables_state(Open_tables_backup *backup) {
 void THD::begin_attachable_ro_transaction() {
   // Not call spectrum storage for any underlying operations, these operations will be performed
   // through the following spectrum_compute_begin_attachable_transaction call.
-  spectrum_compute_disabled = true;
+  disable_spectrum_compute(this);
   m_attachable_trx = new Attachable_trx(this, m_attachable_trx);
-  spectrum_compute_disabled = false;
+  enable_spectrum_compute(this);
 
   if (is_spectrum_compute()) {
     spectrum_compute_begin_attachable_transaction(this, true);
@@ -2221,10 +2221,10 @@ void THD::end_attachable_transaction() {
 
   // Not call spectrum storage for any underlying operations, these operations was performed
   // through the above spectrum_compute_end_attachable_transaction call.
-  spectrum_compute_disabled = true;
+  disable_spectrum_compute(this);
   Attachable_trx *prev_trx = m_attachable_trx->get_prev_attachable_trx();
   delete m_attachable_trx;
-  spectrum_compute_disabled = false;
+  enable_spectrum_compute(this);
 
   // Restore attachable transaction which was active before we started
   // the one which just has ended. NULL in most cases.
@@ -2236,9 +2236,9 @@ void THD::begin_attachable_rw_transaction() {
 
   // Not call spectrum storage for any underlying operations, these operations will be performed
   // through the following spectrum_compute_begin_attachable_transaction call.
-  spectrum_compute_disabled = true;
+  disable_spectrum_compute(this);
   m_attachable_trx = new Attachable_trx_rw(this);
-  spectrum_compute_disabled = false;
+  enable_spectrum_compute(this);
 
   if (is_spectrum_compute()) {
     spectrum_compute_begin_attachable_transaction(this, false);

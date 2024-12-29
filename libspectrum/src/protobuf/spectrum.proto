@@ -7,6 +7,7 @@ service StorageNode {
   rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
 
   rpc AcquireMetadataLock(AcquireMetadataLockRequest) returns (AcquireMetadataLockResponse) {}
+  rpc UpgradeMetadataLock(UpgradeMetadataLockRequest) returns (UpgradeMetadataLockResponse) {}
   rpc ReleaseMetadataLock(ReleaseMetadataLockRequest) returns (ReleaseMetadataLockResponse) {}
 
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
@@ -62,6 +63,16 @@ message AcquireMetadataLockRequest {
 }
 
 message AcquireMetadataLockResponse {
+}
+
+message UpgradeMetadataLockRequest {
+  Thread thread = 1;
+  int32 duration = 2;
+  int32 ticket_number = 3;
+  int32 new_type = 4;
+}
+
+message UpgradeMetadataLockResponse {
 }
 
 message ReleaseMetadataLockRequest {

@@ -47,11 +47,23 @@ bool is_spectrum_compute() {
   return false;
 }
 
+void disable_spectrum_compute(THD *thd) {
+  return;
+}
+
+void enable_spectrum_compute(THD *thd) {
+  return;
+}
+
 bool is_spectrum_storage_replica() {
   return false;
 }
 
 int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket* ticket) {
+  return 0;
+}
+
+int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket* ticket, enum_mdl_type new_type) {
   return 0;
 }
 

@@ -143,6 +143,17 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return handler_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
     }
 
+    MDL_ticket *find_ticket_by_number(THD* thd, enum_mdl_duration duration, int32 ticket_number) {
+      MDL_ticket *ticket = nullptr;
+      MDL_context::Ticket_iterator ticket_it = thd->mdl_context.get_tickets_for_duration(duration);
+      for (ticket = ticket_it++; ticket != nullptr; ticket = ticket_it++) {
+        if (ticket->ticket_number == ticket_number) {
+          break;
+        }
+      }
+      return ticket;
+    }
+
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
@@ -512,6 +523,24 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
+    ::grpc::Status UpgradeMetadataLock(::grpc::ServerContext* context, const ::spectrum::UpgradeMetadataLockRequest* request, ::spectrum::UpgradeMetadataLockResponse* response) {
+      THD *thd;
+      enum_mdl_duration duration = static_cast<enum_mdl_duration>(request->duration());
+      int32_t ticket_number = request->ticket_number();
+      enum_mdl_type new_type = static_cast<enum_mdl_type>(request->new_type());
+
+      sql_print_information("UpgradeMetadataLock: duration=%d, ticket_number=%d, new_type=%d", duration, ticket_number, new_type);
+
+      thd = handler_create_thd(request->thread());
+
+      MDL_ticket *ticket = find_ticket_by_number(thd, duration, ticket_number);
+      if (ticket) {
+        thd->mdl_context.upgrade_shared_lock(ticket, new_type, 10000);
+      }
+
+      return grpc::Status::OK; 
+    }
+
     ::grpc::Status ReleaseMetadataLock(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLockRequest* request, ::spectrum::ReleaseMetadataLockResponse* response) {
       THD *thd;
       enum_mdl_duration duration = static_cast<enum_mdl_duration>(request->duration());
@@ -521,13 +550,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = handler_create_thd(request->thread());
 
-      MDL_ticket *ticket = nullptr;
-      MDL_context::Ticket_iterator ticket_it = thd->mdl_context.get_tickets_for_duration(duration);
-      for (ticket = ticket_it++; ticket != nullptr; ticket = ticket_it++) {
-        if (ticket->ticket_number == ticket_number) {
-          break;
-        }
-      }
+      MDL_ticket *ticket = find_ticket_by_number(thd, duration, ticket_number);
       if (ticket) {
         thd->mdl_context.release_lock(duration, ticket);
       }

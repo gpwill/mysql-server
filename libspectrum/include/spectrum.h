@@ -33,6 +33,9 @@ extern bool is_spectrum_compute();
 extern bool is_spectrum_storage();
 extern bool is_spectrum_storage_replica();
 
+extern void disable_spectrum_compute(THD *thd);
+extern void enable_spectrum_compute(THD *thd);
+
 extern void spectrum_print_row(char* method, TABLE* table);
 extern void spectrum_print_row(char* method, TABLE* table, uchar* record);
 extern void spectrum_row_fill_fields(TABLE* table, ::spectrum::Row *spectrum_row);

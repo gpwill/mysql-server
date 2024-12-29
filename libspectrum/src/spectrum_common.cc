@@ -76,6 +76,14 @@ bool is_spectrum_storage_replica() {
   return false;
 }
 
+void disable_spectrum_compute(THD *thd) {
+  thd->spectrum_compute_disabled = true;
+}
+
+void enable_spectrum_compute(THD *thd) {
+  thd->spectrum_compute_disabled = false;
+}
+
 void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_thread) {
   spectrum_thread->mutable_system_variables()->set_option_bits(thd->variables.option_bits);
 }

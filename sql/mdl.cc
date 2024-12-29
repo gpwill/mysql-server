@@ -60,7 +60,10 @@ static PSI_memory_key key_memory_MDL_context_acquire_locks;
 
 extern bool is_spectrum_compute();
 extern bool is_spectrum_storage_replica();
+extern void disable_spectrum_compute(THD *thd);
+extern void enable_spectrum_compute(THD *thd);
 extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket* ticket);
+extern int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket* ticket, enum_mdl_type new_type);
 extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
 
 #ifdef HAVE_PSI_INTERFACE
@@ -3776,8 +3779,18 @@ bool MDL_context::upgrade_shared_lock(MDL_ticket *mdl_ticket,
 
   MDL_REQUEST_INIT_BY_KEY(&mdl_new_lock_request, &mdl_ticket->m_lock->key,
                           new_type, MDL_TRANSACTION);
+  
+  THD* thd = get_thd();
+  disable_spectrum_compute(thd);
+  if (acquire_lock(&mdl_new_lock_request, lock_wait_timeout)) {
+    enable_spectrum_compute(thd);
+    return true;
+  }
+  enable_spectrum_compute(thd);
 
-  if (acquire_lock(&mdl_new_lock_request, lock_wait_timeout)) return true;
+  if (is_spectrum_compute()) {
+    spectrum_compute_upgrade_mdl(thd, mdl_ticket, new_type);
+  }
 
   is_new_ticket = !has_lock(mdl_svp, mdl_new_lock_request.ticket);
 
