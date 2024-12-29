@@ -1,0 +1,24 @@
+connect(compute0,localhost,root,,,3306,/tmp/mysql-spectrum-compute-0.sock);
+connect(compute1,localhost,root,,,3306,/tmp/mysql-spectrum-compute-1.sock);
+
+--let $db=spectrum_test_12
+
+connection compute0;
+
+--disable_warnings
+eval drop database if exists $db;
+--enable_warnings
+
+eval create database $db;
+eval use $db;
+
+create table employees (id INT PRIMARY KEY, first_name VARCHAR(50) NOT NULL, last_name VARCHAR(50) NOT NULL, hire_date DATE, salary DECIMAL(10, 2));
+insert into employees (id, first_name, last_name, hire_date, salary) VALUES (2, 'Peng', 'Gu', '2024-12-01', 60000.00);
+insert into employees (id, first_name, last_name, hire_date, salary) VALUES (1, 'John', 'Doe', '2024-12-01', 50000.00);
+select * from employees;
+update employees set salary=555 where id=1;
+select * from employees where id=1;
+
+connection compute1;
+eval use $db;
+select * from employees;
