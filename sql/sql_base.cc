@@ -155,6 +155,8 @@
 #include "template_utils.h"
 #include "thr_mutex.h"
 
+#include "spectrum.h"
+
 using std::equal_to;
 using std::hash;
 using std::pair;
@@ -1769,6 +1771,10 @@ void close_thread_table(THD *thd, TABLE **table_ptr) {
   if (table->file != nullptr) table->file->unbind_psi();
 
   release_or_close_table(thd, table);
+
+  if (is_spectrum_compute()) {
+    spectrum_compute_close_table(thd, table);
+  }
 }
 
 /* close_temporary_tables' internal, 4 is due to uint4korr definition */

@@ -61,6 +61,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql_table.h>
 #include <sql/handler.h>
 #include <sql/mysqld.h>
+#include <sql/dd/types/schema.h>
+#include <sql/dd/cache/dictionary_client.h>
 
 #include <current_thd.h>
 #include <debug_sync.h>
@@ -112,6 +114,38 @@ int spectrum_log_create_table(THD *thd, TABLE *table) {
         request.table().c_str(), table->file, status.error_message().c_str());
     return 1;
   }
+  return 0;
+}
+
+int spectrum_log_delete_table(THD *thd, const dd::Table *table_def, const char* table_path) {
+  spectrum::DeleteTableRequest request;
+  spectrum::DeleteTableResponse response;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_log_delete_table[%s]: satrt", table_path);
+
+  const dd::Schema *schema_def = nullptr;
+  thd->dd_client()->acquire(table_def->schema_id(), &schema_def);
+  if (!schema_def) {
+    assert(false);
+  }
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_database(schema_def->name().c_str());
+  request.set_table(table_def->name().c_str());
+  request.set_table_path(table_path);
+
+  grpc::ClientContext context;
+  grpc::Status status = get_storage_replica_client()->DeleteTable(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_log_delete_table[%s]: error=%s", table_path, status.error_message().c_str());
+    return 1;
+  }
+
   return 0;
 }
 

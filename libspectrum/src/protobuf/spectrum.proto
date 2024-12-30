@@ -12,8 +12,13 @@ service StorageNode {
   rpc ReleaseMetadataLocks(ReleaseMetadataLocksRequest) returns (ReleaseMetadataLocksResponse) {}
 
   rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
+  rpc DeleteTable(DeleteTableRequest) returns (DeleteTableResponse) {}
   rpc LockTable(LockTableRequest) returns (LockTableResponse) {}
   rpc UnlockTable(UnlockTableRequest) returns (UnlockTableResponse) {}
+  rpc CloseTable(CloseTableRequest) returns (CloseTableResponse) {}
+
+  rpc PostDDL(PostDDLRequest) returns (PostDDLResponse) {}
+
   rpc InitIndex(InitIndexRequest) returns (InitIndexResponse) {} 
   rpc InitRnd(InitRndRequest) returns (InitRndResponse) {} 
   rpc EndIndex(EndIndexRequest) returns (EndIndexResponse) {} 
@@ -103,6 +108,16 @@ message CreateTableRequest {
 message CreateTableResponse {
 }
 
+message DeleteTableRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  string table_path = 4;
+}
+
+message DeleteTableResponse {
+}
+
 message LockTableRequest {
   Thread thread = 1;
   string database = 2;
@@ -111,6 +126,9 @@ message LockTableRequest {
   int32 lock_type = 5;
   int32 lock_action = 6;
   bool start_stmt = 7;
+}
+
+message LockTableResponse {
 }
 
 message UnlockTableResponse {
@@ -125,7 +143,21 @@ message UnlockTableRequest {
   int32 lock_action = 6;
 }
 
-message LockTableResponse {
+message CloseTableRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int64 handler = 4;
+}
+
+message CloseTableResponse {
+}
+
+message PostDDLRequest {
+  Thread thread = 1;
+}
+
+message PostDDLResponse {
 }
 
 message InitIndexRequest {

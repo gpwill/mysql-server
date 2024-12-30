@@ -47,6 +47,7 @@
 #include "sql/handler.h"
 #include "sql/sql_lex.h"
 #include "sql/protocol_classic.h"
+#include "sql/dd/dd_table.h"
 #include "sql/dd_table_share.h"
 #include "sql/dd/types/table.h"
 #include "sql/dd/cache/dictionary_client.h"
@@ -81,8 +82,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
     THD *handler_create_thd(const spectrum::Thread &spectrum_thread)
     {
-      MDL_request_list mdl_requests;
-
       my_thread_init();
 
       Find_thd_with_spectrum_thread_id find_thd_with_spectrum_thread_id(spectrum_thread.id());
@@ -139,8 +138,25 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
           return t;
         }
       }
-
       return handler_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
+    }
+
+    void handler_find_and_close_table(
+        THD *thd,
+        const char *db_name,
+        const char *table_name,
+        uint64 handler_id)
+    {
+      TABLE **table;
+      for (table = &thd->open_tables; *table; table = &(*table)->next) {
+        if ((*table)->file->spectrum_handler_id == handler_id) {
+          assert(!strcmp((*table)->s->db.str, db_name) && !strcmp((*table)->s->table_name.str, table_name));
+          break;
+        }
+      }
+      assert(*table);
+
+      close_thread_table(thd, table);
     }
 
     MDL_ticket *find_ticket_by_number(THD* thd, enum_mdl_duration duration, int32 ticket_number) {
@@ -159,6 +175,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd;
       bool error;
       int error_code;
+      const dd::Schema *schema_def = nullptr;
       const dd::Table *table_def = nullptr;
       dd::Table *table_def_clone;
       TABLE_SHARE table_share;
@@ -175,10 +192,17 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = handler_create_thd(request->thread());
 
-      // Retrive table definition
+      // Invalidate shared dd cache for db
       dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+      thd->dd_client()->acquire(db_name, &schema_def);
+      if (schema_def == nullptr) {
+        sql_print_error("CreateTable[%s:%s:%d]: can not find schema definition", db_name, table_name, handler_id);
+        goto end;
+      }
+      thd->dd_client()->invalidate(schema_def);
+
+      // Retrive table definition
       thd->dd_client()->reload_uncommitted(db_name, table_name, (const dd::Abstract_table **)&table_def);
-      //thd->dd_client()->acquire(db_name, table_name, &table_def);
       if (table_def == nullptr) {
         sql_print_error("CreateTable[%s:%s:%d]: can not find table definition", db_name, table_name, handler_id);
         goto end;
@@ -199,7 +223,56 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-     ::grpc::Status LockTable(::grpc::ServerContext* context, const ::spectrum::LockTableRequest* request, ::spectrum::LockTableResponse* response) {
+    ::grpc::Status DeleteTable(::grpc::ServerContext* context, const ::spectrum::DeleteTableRequest* request, ::spectrum::DeleteTableResponse* response) {
+      THD *thd;
+      int error = 0;
+      handlerton *hton{nullptr};
+      const dd::Table *table_def = nullptr;
+      const char* db_name = request->database().c_str();
+      const char* table_name = request->table().c_str();
+      const char* table_path = request->table_path().c_str();
+
+      sql_print_information("DeleteTable[%s:%s]: table_path=%s", db_name, table_name, table_path);
+
+      thd = handler_create_thd(request->thread());
+
+      // Retrive table definition
+      dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+      thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
+      if (table_def == nullptr) {
+        sql_print_error("DeleteTable[%s:%s]: can not find table definition", db_name, table_name);
+        goto end;
+      }
+
+      tdc_remove_table(thd, TDC_RT_REMOVE_ALL, db_name, table_name, false);
+
+      dd::table_storage_engine(thd, table_def, &hton);
+      error = ha_delete_table(thd, hton, table_path, db_name, table_name, table_def->clone(), false);
+      if (error) {
+        sql_print_error("DeleteTable[%s:%s]: can not delete table in ha, error=%d", db_name, table_name, error);
+        goto end;
+      }
+
+    end:
+      thd->dd_client()->commit_modified_objects();
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
+      THD *thd;
+      int error = 0;
+      handlerton *hton{nullptr};
+
+      sql_print_information("PostDDL");
+
+      thd = handler_create_thd(request->thread());
+      hton = ha_default_handlerton(thd);
+      hton->post_ddl(thd);
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status LockTable(::grpc::ServerContext* context, const ::spectrum::LockTableRequest* request, ::spectrum::LockTableResponse* response) {
       THD *thd;
       TABLE *table;
       const char* db_name = request->database().c_str();
@@ -235,6 +308,21 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table = handler_find_or_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
 
       mysql_unlock_some_tables(thd, &table, 1);
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status CloseTable(::grpc::ServerContext* context, const ::spectrum::CloseTableRequest* request, ::spectrum::CloseTableResponse* response) {
+      THD *thd;
+      TABLE *table;
+      const char* db_name = request->database().c_str();
+      const char* table_name = request->table().c_str();
+      uint64 handler_id = request->handler();
+
+      sql_print_information("CloseTable[%s:%d]", table_name, handler_id);
+
+      thd = handler_create_thd(request->thread());
+      handler_find_and_close_table(thd, db_name, table_name, handler_id);
 
       return grpc::Status::OK; 
     }

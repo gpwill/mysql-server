@@ -24,6 +24,7 @@
 #include<stdlib.h>
 
 #include "sql/table.h"
+#include "sql/dd/types/table.h"
 
 #include "spectrum.grpc.pb.h"
 
@@ -45,8 +46,10 @@ extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum:
 extern void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread);
 
 extern int spectrum_compute_create_table(THD *thd, TABLE *table);
+extern int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const char* table_path);
 extern int spectrum_compute_lock_table(THD *thd, TABLE *table);
 extern int spectrum_compute_unlock_table(THD *thd, TABLE *table);
+extern int spectrum_compute_close_table(THD *thd, TABLE *table);
 extern int spectrum_compute_init_index(THD *thd, TABLE *table, uint index);
 extern int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan);
 extern int spectrum_compute_end_index(THD *thd, TABLE *table);
@@ -65,7 +68,10 @@ extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket);
 extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
 
 extern int spectrum_log_create_table(THD *thd, TABLE *table);
+extern int spectrum_log_delete_table(THD *thd, const dd::Table *table_def, const char* table_path);
 extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
 extern int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock);
+
+extern int spectrum_compute_post_ddl(THD *thd);
 
 #endif

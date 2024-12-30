@@ -5105,6 +5105,11 @@ void innobase_set_open_files_limit(long new_limit) {
 /** Perform post-commit/rollback cleanup after DDL statement
 @param[in,out]  thd     connection thread */
 static void innobase_post_ddl(THD *thd) {
+  if (is_spectrum_compute()) {
+    spectrum_compute_post_ddl(thd);
+    return;
+  }
+
   /* During upgrade, etc., the log_ddl may haven't been
   initialized and there is nothing to do now. */
   if (log_ddl != nullptr) {
@@ -15402,10 +15407,20 @@ be dropped
 @return error number
 @retval 0 on success */
 int ha_innobase::delete_table(const char *name, const dd::Table *table_def) {
-  if (table_def != nullptr &&
-      dict_sys_t::is_dd_table_id(table_def->se_private_id())) {
-    my_error(ER_NOT_ALLOWED_COMMAND, MYF(0));
-    return (HA_ERR_UNSUPPORTED);
+  if (is_spectrum_compute()) {
+    THD *thd = ha_thd();
+
+    spectrum_compute_delete_table(thd, table_def, name);
+
+    dd::cache::Dictionary_client *dd_client = dd::get_dd_client(thd);
+    dd::cache::Dictionary_client::Auto_releaser releaser(dd_client);
+    dd::Object_id dd_space_id = dd_first_index(table_def)->tablespace_id();
+    dd::Tablespace *dd_space;
+    dd_client->acquire(dd_space_id, (const dd::Tablespace**)&dd_space);
+    if (dd_space) {
+      sql_print_information("Delete table got tablespace id=%d, name=%s", dd_space->id(), dd_space->name().c_str());
+      dd_client->invalidate(dd_space);
+    }
   }
 
   THD *thd = ha_thd();
