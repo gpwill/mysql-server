@@ -1,6 +1,6 @@
-drop database if exists spectrum_test_30;
-create database spectrum_test_30;
-use spectrum_test_30;
+drop database if exists spectrum_test_45;
+create database spectrum_test_45;
+use spectrum_test_45;
 create table employees (id INT PRIMARY KEY, first_name VARCHAR(50) NOT NULL, last_name VARCHAR(50) NOT NULL, hire_date DATE, salary DECIMAL(10, 2));
 insert into employees (id, first_name, last_name, hire_date, salary) VALUES (2, 'Peng', 'Gu', '2024-12-01', 60000.00);
 insert into employees (id, first_name, last_name, hire_date, salary) VALUES (1, 'John', 'Doe', '2024-12-01', 50000.00);
@@ -12,8 +12,15 @@ update employees set salary=555 where id=1;
 select * from employees where id=1;
 id	first_name	last_name	hire_date	salary
 1	John	Doe	2024-12-01	555.00
-use spectrum_test_30;
+use spectrum_test_45;
 select * from employees;
 id	first_name	last_name	hire_date	salary
 1	John	Doe	2024-12-01	555.00
 2	Peng	Gu	2024-12-01	60000.00
+set autocommit = 0;
+update employees set salary=888 where id=1;
+set session transaction isolation level READ COMMITTED;
+select * from employees where id=1;
+id	first_name	last_name	hire_date	salary
+1	John	Doe	2024-12-01	555.00
+commit;

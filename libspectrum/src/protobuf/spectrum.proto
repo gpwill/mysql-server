@@ -42,7 +42,9 @@ message SystemVariables {
 
 message Thread {
   int64 id = 1;
-  SystemVariables system_variables = 2;
+  int32 tx_isolation = 2;
+  int32 sql_command = 3;
+  SystemVariables system_variables = 4;
 }
 
 message Row {

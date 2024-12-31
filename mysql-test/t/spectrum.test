@@ -1,7 +1,7 @@
 connect(compute0,localhost,root,,,3306,/tmp/mysql-spectrum-compute-0.sock);
 connect(compute1,localhost,root,,,3306,/tmp/mysql-spectrum-compute-1.sock);
 
---let $db=spectrum_test_30
+--let $db=spectrum_test_45
 
 connection compute0;
 
@@ -22,3 +22,14 @@ select * from employees where id=1;
 connection compute1;
 eval use $db;
 select * from employees;
+
+connection compute0;
+set autocommit = 0;
+update employees set salary=888 where id=1;
+
+connection compute1;
+set session transaction isolation level READ COMMITTED;
+select * from employees where id=1;
+
+connection compute0;
+commit;

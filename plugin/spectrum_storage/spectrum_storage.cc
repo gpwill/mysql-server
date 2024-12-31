@@ -98,6 +98,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
             spectrum_thread.id(), thd->thread_id()); 
       }
       thd->store_globals();
+      thd->lex->sql_command = (enum_sql_command)spectrum_thread.sql_command();
+      thd->tx_isolation = (enum_tx_isolation)spectrum_thread.tx_isolation();
       thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
       return (thd);
     }

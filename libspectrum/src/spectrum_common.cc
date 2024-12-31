@@ -49,6 +49,8 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql/table.h>
 #include <sql/log.h>
 
+#include <mysql/plugin.h>
+
 #include <grpc/grpc.h>
 #include "spectrum.h"
 
@@ -90,6 +92,8 @@ void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_
 
 void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread) {
   spectrum_thread->set_id(thd->spectrum_thread_id);
+  spectrum_thread->set_tx_isolation(thd->tx_isolation);
+  spectrum_thread->set_sql_command(thd_sql_command(thd));
 
   spectrum_thread_fill_system_variables(thd, spectrum_thread);
 }
