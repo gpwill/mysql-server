@@ -6,6 +6,7 @@ service StorageNode {
   rpc BeginAttachableTransaction(BeginAttachableTransactionRequest) returns (BeginAttachableTransactionResponse) {}
   rpc EndAttachableTransaction(EndAttachableTransactionRequest) returns (EndAttachableTransactionResponse) {}
 
+  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse) {}
   rpc AcquireMetadataLock(AcquireMetadataLockRequest) returns (AcquireMetadataLockResponse) {}
   rpc UpgradeMetadataLock(UpgradeMetadataLockRequest) returns (UpgradeMetadataLockResponse) {}
   rpc ReleaseMetadataLock(ReleaseMetadataLockRequest) returns (ReleaseMetadataLockResponse) {}
@@ -57,6 +58,16 @@ message Field {
   string name = 1;
   bytes value = 2;
   bool is_null = 3;
+}
+
+message UpdateMetadataRequest {
+  Thread thread = 1;
+  string table = 2;
+  uint64 object_id = 3;
+  string object_name = 4;
+}
+
+message UpdateMetadataResponse {
 }
 
 message AcquireMetadataLockRequest {

@@ -15409,18 +15409,35 @@ be dropped
 int ha_innobase::delete_table(const char *name, const dd::Table *table_def) {
   if (is_spectrum_compute()) {
     THD *thd = ha_thd();
-
-    spectrum_compute_delete_table(thd, table_def, name);
-
     dd::cache::Dictionary_client *dd_client = dd::get_dd_client(thd);
     dd::cache::Dictionary_client::Auto_releaser releaser(dd_client);
     dd::Object_id dd_space_id = dd_first_index(table_def)->tablespace_id();
-    dd::Tablespace *dd_space;
-    dd_client->acquire(dd_space_id, (const dd::Tablespace**)&dd_space);
-    if (dd_space) {
-      sql_print_information("Delete table got tablespace id=%d, name=%s", dd_space->id(), dd_space->name().c_str());
-      dd_client->invalidate(dd_space);
+    std::unique_ptr<dd::Tablespace> dd_space;
+
+    if (dd_client->acquire_uncached_uncommitted(dd_space_id, &dd_space) ||
+        dd_space == nullptr) {
+      my_error(ER_INTERNAL_ERROR, MYF(0),
+             " InnoDB can't get tablespace object"
+             " for space ",
+             dd_space_id);
+      return HA_ERR_GENERIC;
     }
+    ut_a(dd_space != nullptr);
+
+    if (is_spectrum_compute()) {
+      spectrum_compute_delete_table(thd, table_def, name);
+    }
+
+    if (dd_tablespace_get_mdl(dd_space->name().c_str())) {
+      my_error(ER_INTERNAL_ERROR, MYF(0),
+             " InnoDB can't set exclusive MDL on"
+             " tablespace ",
+             dd_space->name().c_str());
+      return HA_ERR_GENERIC;
+    }
+
+    dd_client->invalidate(dd_space.get());
+    return 0;
   }
 
   THD *thd = ha_thd();

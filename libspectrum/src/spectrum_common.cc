@@ -127,7 +127,7 @@ void spectrum_print_row(char* method, TABLE* table, uchar* record) {
     row.pop_back();
     row.pop_back();
   }
-  sql_print_information("%s[%s:%d]: %s", method, table->s->table_name.str, hander_id, row.c_str());
+  sql_print_information("%s[%s:%s:%d]: %s", method, table->s->db.str, table->s->table_name.str, hander_id, row.c_str());
 
   repoint_field_to_record(table, record, table->record[0]);
   table->read_set = temp_read_set;

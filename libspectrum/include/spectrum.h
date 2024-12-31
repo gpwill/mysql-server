@@ -45,6 +45,9 @@ extern void spectrum_row_extract_fields(TABLE *table, ::spectrum::Row *spectrum_
 extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum::Row *spectrum_row);
 extern void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread);
 
+template<typename T>
+int spectrum_compute_update_metadata(THD *thd, const T *object);
+
 extern int spectrum_compute_create_table(THD *thd, TABLE *table);
 extern int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const char* table_path);
 extern int spectrum_compute_lock_table(THD *thd, TABLE *table);

@@ -75,6 +75,8 @@
 #include "sql/log.h"
 #include "sql/sql_class.h"  // THD
 
+#include "spectrum.h"
+
 namespace dd {
 namespace cache {
 
@@ -267,6 +269,10 @@ bool Storage_adapter::drop(THD *thd, const T *object) {
     return true;
   }
 
+  if (is_spectrum_compute()) {
+    spectrum_compute_update_metadata(thd, object);
+  }
+
   return false;
 }
 
@@ -338,6 +344,10 @@ bool Storage_adapter::store(THD *thd, T *object) {
     return true;
   }
   thd->pop_internal_handler();
+
+  if (is_spectrum_compute()) {
+    spectrum_compute_update_metadata(thd, object);
+  }
 
   // Do not create SDIs for tablespaces and tables while creating
   // dictionary entry during upgrade.
