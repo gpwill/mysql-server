@@ -181,17 +181,10 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
-      bool error;
-      int error_code;
-      const dd::Schema *schema_def = nullptr;
-      const dd::Table *table_def = nullptr;
-      dd::Table *table_def_clone;
-      TABLE_SHARE table_share;
-      char table_filepath[FN_REFLEN + 1];
+      int error;
       HA_CREATE_INFO create_info;
-      MDL_request_list mdl_requests;
-      dd::Table::Name_key table_name_kay;
-      const dd::Table::Cache_partition *stored_object = nullptr;
+      dd::Table *table_def = nullptr;
+      char table_filepath[FN_REFLEN + 1];
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       uint64 handler_id = request->handler();
@@ -208,10 +201,9 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
         goto end;
       }
 
-      table_def_clone = table_def->clone();
       build_table_filename(table_filepath, sizeof(table_filepath) - 1, db_name, table_name, "", 0);      
-      error_code = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def_clone);
-      if (error_code) {
+      error = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def);
+      if (error) {
         sql_print_error("CreateTable[%s:%s:%d]: can not create table in ha, error=%d", db_name, table_name, handler_id, error);
         goto end;
       }
@@ -686,17 +678,10 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
-      bool error;
-      int error_code;
-      const dd::Schema *schema_def = nullptr;
-      const dd::Table *table_def = nullptr;
-      dd::Table *table_def_clone;
-      TABLE_SHARE table_share;
-      char table_filepath[FN_REFLEN + 1];
+      int error;
       HA_CREATE_INFO create_info;
-      MDL_request_list mdl_requests;
-      dd::Table::Name_key table_name_kay;
-      const dd::Table::Cache_partition *stored_object = nullptr;
+      dd::Table *table_def = nullptr;
+      char table_filepath[FN_REFLEN + 1];
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       uint64 handler_id = request->handler();
@@ -713,10 +698,9 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         goto end;
       }
 
-      table_def_clone = table_def->clone();
       build_table_filename(table_filepath, sizeof(table_filepath) - 1, db_name, table_name, "", 0);      
-      error_code = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def_clone);
-      if (error_code) {
+      error = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def);
+      if (error) {
         sql_print_error("CreateTable[%s:%s:%d]: can not create table in ha, error=%d", db_name, table_name, handler_id, error);
         goto end;
       }
