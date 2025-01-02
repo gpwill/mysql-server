@@ -165,6 +165,76 @@ void find_and_close_table(
   close_thread_table(thd, table);
 }
 
+int create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id) {
+  HA_CREATE_INFO create_info;
+  dd::Table *table_def = nullptr;
+  char table_filepath[FN_REFLEN + 1];
+
+  sql_print_information("CreateTable[%s:%s:%d]", db_name, table_name, handler_id);
+
+  // Retrive table definition
+  dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+  thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
+  if (table_def == nullptr) {
+    sql_print_error("CreateTable[%s:%s:%d]: can not find table definition", db_name, table_name, handler_id);
+    return HA_ERR_NO_SUCH_TABLE;
+  }
+
+  build_table_filename(table_filepath, sizeof(table_filepath) - 1, db_name, table_name, "", 0);      
+  int error = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def);
+  if (error) {
+    sql_print_error("CreateTable[%s:%s:%d]: can not create table in ha, error=%d", db_name, table_name, handler_id, error);
+    return error;
+  }
+  return 0;
+}
+
+int delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path) {
+  handlerton *hton{nullptr};
+  const dd::Table *table_def = nullptr;
+
+  sql_print_information("DeleteTable[%s:%s]: table_path=%s", db_name, table_name, table_path);
+
+  // Retrive table definition
+  dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
+  thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
+  if (table_def == nullptr) {
+    sql_print_error("DeleteTable[%s:%s]: can not find table definition", db_name, table_name);
+    return HA_ERR_NO_SUCH_TABLE;
+  }
+
+  tdc_remove_table(thd, TDC_RT_REMOVE_ALL, db_name, table_name, false);
+
+  dd::table_storage_engine(thd, table_def, &hton);
+  int error = ha_delete_table(thd, hton, table_path, db_name, table_name, table_def->clone(), false);
+  if (error) {
+    sql_print_error("DeleteTable[%s:%s]: can not delete table in ha, error=%d", db_name, table_name, error);
+    return error;
+  }
+  return 0;
+}
+
+int update_metadata(THD *thd, const char* table_name, dd::Object_id object_id, const char* object_name) {
+  sql_print_information("UpdateMetadata: table=%s, object_id=%d, object_name=%s",
+        table_name, object_id, object_name);
+  if (!strcmp(table_name, "schemata")) {
+    const dd::Schema *object;
+    thd->dd_client()->reload_uncommitted(object_id, &object);
+  } else if (!strcmp(table_name, "tables")) {
+    const dd::Abstract_table *object;
+    thd->dd_client()->reload_uncommitted(object_id, &object);
+  }
+  return 0;
+}
+
+int post_ddl(THD *thd) {
+  sql_print_information("PostDDL");
+
+  handlerton *hton = ha_default_handlerton(thd);
+  hton->post_ddl(thd);
+  return 0;
+}
+
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
   private:
     MDL_ticket *find_ticket_by_number(THD* thd, enum_mdl_duration duration, int32 ticket_number) {
@@ -181,83 +251,29 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
-      int error;
-      HA_CREATE_INFO create_info;
-      dd::Table *table_def = nullptr;
-      char table_filepath[FN_REFLEN + 1];
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       uint64 handler_id = request->handler();
 
-      sql_print_information("CreateTable[%s:%s:%d]", db_name, table_name, handler_id);
-
       thd = create_thd(request->thread());
-
-      // Retrive table definition
-      dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
-      thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
-      if (table_def == nullptr) {
-        sql_print_error("CreateTable[%s:%s:%d]: can not find table definition", db_name, table_name, handler_id);
-        goto end;
-      }
-
-      build_table_filename(table_filepath, sizeof(table_filepath) - 1, db_name, table_name, "", 0);      
-      error = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def);
-      if (error) {
-        sql_print_error("CreateTable[%s:%s:%d]: can not create table in ha, error=%d", db_name, table_name, handler_id, error);
-        goto end;
-      }
-
-    end:
+      create_table(thd, db_name, table_name, handler_id);
       return grpc::Status::OK; 
     }
 
     ::grpc::Status DeleteTable(::grpc::ServerContext* context, const ::spectrum::DeleteTableRequest* request, ::spectrum::DeleteTableResponse* response) {
       THD *thd;
-      int error = 0;
-      handlerton *hton{nullptr};
-      const dd::Table *table_def = nullptr;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       const char* table_path = request->table_path().c_str();
 
-      sql_print_information("DeleteTable[%s:%s]: table_path=%s", db_name, table_name, table_path);
-
       thd = create_thd(request->thread());
-
-      // Retrive table definition
-      dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
-      thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
-      if (table_def == nullptr) {
-        sql_print_error("DeleteTable[%s:%s]: can not find table definition", db_name, table_name);
-        goto end;
-      }
-
-      tdc_remove_table(thd, TDC_RT_REMOVE_ALL, db_name, table_name, false);
-
-      dd::table_storage_engine(thd, table_def, &hton);
-      error = ha_delete_table(thd, hton, table_path, db_name, table_name, table_def->clone(), false);
-      if (error) {
-        sql_print_error("DeleteTable[%s:%s]: can not delete table in ha, error=%d", db_name, table_name, error);
-        goto end;
-      }
-
-    end:
-      thd->dd_client()->commit_modified_objects();
+      delete_table(thd, db_name, table_name, table_path);
       return grpc::Status::OK; 
     }
 
     ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
-      THD *thd;
-      int error = 0;
-      handlerton *hton{nullptr};
-
-      sql_print_information("PostDDL");
-
-      thd = create_thd(request->thread());
-      hton = ha_default_handlerton(thd);
-      hton->post_ddl(thd);
-
+      THD *thd = create_thd(request->thread());
+      post_ddl(thd);
       return grpc::Status::OK; 
     }
 
@@ -577,18 +593,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       const dd::Object_id object_id = request->object_id();
       const std::string& object_name = request->object_name();
 
-      sql_print_information("UpdateMetadata: table=%s, object_id=%d, object_name=%s",
-            table.c_str(), object_id, object_name.c_str()); 
-
       thd = create_thd(request->thread());
-
-      if (!strcmp(table.c_str(), "schemata")) {
-        const dd::Schema *object;
-        thd->dd_client()->reload_uncommitted(object_id, &object);
-      } else if (!strcmp(table.c_str(), "tables")) {
-        const dd::Abstract_table *object;
-        thd->dd_client()->reload_uncommitted(object_id, &object);
-      }
+      update_metadata(thd, table.c_str(), object_id, object_name.c_str());
       return grpc::Status::OK; 
     }
 
@@ -678,83 +684,29 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
-      int error;
-      HA_CREATE_INFO create_info;
-      dd::Table *table_def = nullptr;
-      char table_filepath[FN_REFLEN + 1];
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       uint64 handler_id = request->handler();
 
-      sql_print_information("CreateTable[%s:%s:%d]", db_name, table_name, handler_id);
-
       thd = create_thd(request->thread());
-
-      // Retrive table definition
-      dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
-      thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
-      if (table_def == nullptr) {
-        sql_print_error("CreateTable[%s:%s:%d]: can not find table definition", db_name, table_name, handler_id);
-        goto end;
-      }
-
-      build_table_filename(table_filepath, sizeof(table_filepath) - 1, db_name, table_name, "", 0);      
-      error = ha_create_table(thd, table_filepath, db_name, table_name, &create_info, true, false, table_def);
-      if (error) {
-        sql_print_error("CreateTable[%s:%s:%d]: can not create table in ha, error=%d", db_name, table_name, handler_id, error);
-        goto end;
-      }
-
-    end:
-      return grpc::Status::OK; 
+      create_table(thd, db_name, table_name, handler_id);
+      return grpc::Status::OK;
     }
 
     ::grpc::Status DeleteTable(::grpc::ServerContext* context, const ::spectrum::DeleteTableRequest* request, ::spectrum::DeleteTableResponse* response) {
       THD *thd;
-      int error = 0;
-      handlerton *hton{nullptr};
-      const dd::Table *table_def = nullptr;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       const char* table_path = request->table_path().c_str();
 
-      sql_print_information("DeleteTable[%s:%s]: table_path=%s", db_name, table_name, table_path);
-
       thd = create_thd(request->thread());
-
-      // Retrive table definition
-      dd::cache::Dictionary_client::Auto_releaser releaser(thd->dd_client());
-      thd->dd_client()->acquire(db_name, table_name, (const dd::Abstract_table **)&table_def);
-      if (table_def == nullptr) {
-        sql_print_error("DeleteTable[%s:%s]: can not find table definition", db_name, table_name);
-        goto end;
-      }
-
-      tdc_remove_table(thd, TDC_RT_REMOVE_ALL, db_name, table_name, false);
-
-      dd::table_storage_engine(thd, table_def, &hton);
-      error = ha_delete_table(thd, hton, table_path, db_name, table_name, table_def->clone(), false);
-      if (error) {
-        sql_print_error("DeleteTable[%s:%s]: can not delete table in ha, error=%d", db_name, table_name, error);
-        goto end;
-      }
-
-    end:
-      thd->dd_client()->commit_modified_objects();
+      delete_table(thd, db_name, table_name, table_path);
       return grpc::Status::OK; 
     }
 
     ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
-      THD *thd;
-      int error = 0;
-      handlerton *hton{nullptr};
-
-      sql_print_information("PostDDL");
-
-      thd = create_thd(request->thread());
-      hton = ha_default_handlerton(thd);
-      hton->post_ddl(thd);
-
+      THD *thd = create_thd(request->thread());
+      post_ddl(thd);
       return grpc::Status::OK; 
     }
 
@@ -764,18 +716,8 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       const dd::Object_id object_id = request->object_id();
       const std::string& object_name = request->object_name();
 
-      sql_print_information("UpdateMetadata: table=%s, object_id=%d, object_name=%s",
-            table.c_str(), object_id, object_name.c_str()); 
-
       thd = create_thd(request->thread());
-
-      if (!strcmp(table.c_str(), "schemata")) {
-        const dd::Schema *object;
-        thd->dd_client()->reload_uncommitted(object_id, &object);
-      } else if (!strcmp(table.c_str(), "tables")) {
-        const dd::Abstract_table *object;
-        thd->dd_client()->reload_uncommitted(object_id, &object);
-      }
+      update_metadata(thd, table.c_str(), object_id, object_name.c_str());
       return grpc::Status::OK; 
     }
 
