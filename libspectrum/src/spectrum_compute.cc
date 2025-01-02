@@ -418,6 +418,7 @@ int spectrum_compute_read_row(THD *thd, TABLE *table, uint index,
     spectrum::Row spectrum_row = response.row();
     spectrum_row_extract_fields(table, &spectrum_row);
     spectrum_print_row("spectrum_read_row", table);
+    store_record(table, record[1]);
     return 0;
   }
   sql_print_information("spectrum_read_row[%s:%s:%d]: record not found", table->s->db.str, table->s->table_name.str, table->file);
@@ -456,6 +457,7 @@ int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *bu
     spectrum::Row spectrum_row = response.row();
     spectrum_row_extract_fields(table, &spectrum_row);
     spectrum_print_row("spectrum_read_next_row", table);
+    store_record(table, record[1]);
     return 0;
   }
   sql_print_information("spectrum_read_next_row[%s:%s:%d]: record not found", table->s->db.str, table->s->table_name.str, table->file);
@@ -493,6 +495,7 @@ int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *bu
     spectrum::Row spectrum_row = response.row();
     spectrum_row_extract_fields(table, &spectrum_row);
     spectrum_print_row("spectrum_read_prev_row", table);
+    store_record(table, record[1]);
     return 0;
   }
   sql_print_information("spectrum_read_prev_row[%s:%s:%d]: record not found", table->s->db.str, table->s->table_name.str, table->file);

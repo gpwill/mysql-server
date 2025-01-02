@@ -183,7 +183,8 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
   spectrum::ReplicateRowResponse response;
   grpc::ClientContext context;
 
-  spectrum_print_row("spectrum_log_replicate_row", table);
+  spectrum_print_row("spectrum_log_replicate_row_new", table, new_row);
+  spectrum_print_row("spectrum_log_replicate_old_new", table, old_row);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);

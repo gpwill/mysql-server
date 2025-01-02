@@ -77,6 +77,37 @@ class Find_thd_with_spectrum_thread_id : public Find_THD_Impl {
   const uint64 m_spectrum_thread_id;
 };
 
+THD *create_thd(const spectrum::Thread &spectrum_thread)
+{
+  my_thread_init();
+
+  Find_thd_with_spectrum_thread_id find_thd_with_spectrum_thread_id(spectrum_thread.id());
+  THD_ptr thd_ptr = Global_THD_manager::get_instance()->find_thd(&find_thd_with_spectrum_thread_id);
+  THD *thd = thd_ptr.get();
+  if (!thd) {
+    thd = new (std::nothrow) THD;
+    thd->spectrum_thread_id = spectrum_thread.id();
+    thd->set_new_thread_id();
+    thd->thread_stack = reinterpret_cast<char *>(&thread_stack);
+    thd->get_protocol_classic()->init_net((Vio *)0);
+    Global_THD_manager::get_instance()->add_thd(thd);
+
+    // This is needed because register_uncommitted_object() and register_dropped_object() require a non-default
+    // auto releaser, even though it's not actually required because uncommitted/dropped objects will be
+    // released in remove_uncommitted_objects() when transaction commits.
+    new dd::cache::Dictionary_client::Auto_releaser(thd->dd_client());
+
+    sql_print_information("Created new thread: spectrum_thread_id=%d local_thread_id=%d",
+        spectrum_thread.id(), thd->thread_id()); 
+  }
+  thd->store_globals();
+  thd->lex->sql_command = (enum_sql_command)spectrum_thread.sql_command();
+  thd->tx_isolation = (enum_tx_isolation)spectrum_thread.tx_isolation();
+  thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
+
+  return (thd);
+}
+
 TABLE *open_table(
     THD *thd,
     const char *db_name,
@@ -136,37 +167,6 @@ void find_and_close_table(
 
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
   private:
-
-    THD *create_thd(const spectrum::Thread &spectrum_thread)
-    {
-      my_thread_init();
-
-      Find_thd_with_spectrum_thread_id find_thd_with_spectrum_thread_id(spectrum_thread.id());
-      THD_ptr thd_ptr = Global_THD_manager::get_instance()->find_thd(&find_thd_with_spectrum_thread_id);
-      THD *thd = thd_ptr.get();
-      if (!thd) {
-        thd = new (std::nothrow) THD;
-        thd->spectrum_thread_id = spectrum_thread.id();
-        thd->set_new_thread_id();
-        thd->thread_stack = reinterpret_cast<char *>(&thread_stack);
-        thd->get_protocol_classic()->init_net((Vio *)0);
-        Global_THD_manager::get_instance()->add_thd(thd);
-        sql_print_information("Created new thread: spectrum_thread_id=%d local_thread_id=%d",
-            spectrum_thread.id(), thd->thread_id()); 
-      }
-      thd->store_globals();
-      thd->lex->sql_command = (enum_sql_command)spectrum_thread.sql_command();
-      thd->tx_isolation = (enum_tx_isolation)spectrum_thread.tx_isolation();
-      thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
-      
-      // This is needed because register_uncommitted_object() and register_dropped_object() require a non-default
-      // auto releaser, even though it's not actually required because uncommitted/dropped objects will be
-      // released in remove_uncommitted_objects() when transaction commits.
-      new dd::cache::Dictionary_client::Auto_releaser(thd->dd_client());
-      
-      return (thd);
-    }
-
     MDL_ticket *find_ticket_by_number(THD* thd, enum_mdl_duration duration, int32 ticket_number) {
       MDL_ticket *ticket = nullptr;
       MDL_context::Ticket_iterator ticket_it = thd->mdl_context.get_tickets_for_duration(duration);
@@ -683,36 +683,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 };
 
 class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Service {
-  private:
-    THD *thd = nullptr;
-
-    THD *create_thd(const spectrum::Thread &spectrum_thread)
-    {
-      my_thread_init();
-
-      if (!thd) {
-        thd = new (std::nothrow) THD;
-        thd->spectrum_thread_id = spectrum_thread.id();
-        thd->set_new_thread_id();
-        thd->thread_stack = reinterpret_cast<char *>(&thread_stack);
-        thd->get_protocol_classic()->init_net((Vio *)0);
-        Global_THD_manager::get_instance()->add_thd(thd);
-        sql_print_information("Created new thread: spectrum_thread_id=%d local_thread_id=%d",
-            spectrum_thread.id(), thd->thread_id()); 
-      }
-      thd->store_globals();
-      thd->lex->sql_command = (enum_sql_command)spectrum_thread.sql_command();
-      thd->tx_isolation = (enum_tx_isolation)spectrum_thread.tx_isolation();
-      thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
-      
-      // This is needed because register_uncommitted_object() and register_dropped_object() require a non-default
-      // auto releaser, even though it's not actually required because uncommitted/dropped objects will be
-      // released in remove_uncommitted_objects() when transaction commits.
-      new dd::cache::Dictionary_client::Auto_releaser(thd->dd_client());
-      
-      return (thd);
-    }
-
   public:
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
@@ -878,17 +848,16 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       thd = create_thd(request->thread());
 
+      close_thread_tables(thd);
+
       // Disable 2pc commit
       Transaction_ctx *trn_ctx = thd->get_transaction();
       trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::SESSION, true);
       trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::STMT, true);
       
-      if (thd->is_attachable_transaction_active()) {
-        assert(!request->all());
-        trans_commit_attachable(thd);
-      } else if (request->all()) {
+      if (request->all()) {
         trans_commit(thd, false);
-        //thd->mdl_context.release_transactional_locks();
+        thd->mdl_context.release_transactional_locks();
       } else {
         trans_commit_stmt(thd, false);
       }

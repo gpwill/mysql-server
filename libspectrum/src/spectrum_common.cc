@@ -109,6 +109,11 @@ void spectrum_print_row(char* method, TABLE* table, uchar* record) {
   uint64 hander_id = table->file->spectrum_handler_id ? table->file->spectrum_handler_id : (uint64)table->file;
   MY_BITMAP *temp_read_set;
 
+  if (!record) {
+    sql_print_information("%s[%s:%s:%d]: null", method, table->s->db.str, table->s->table_name.str, hander_id);
+    return;
+  }
+
   temp_read_set = table->read_set;
   table->read_set = nullptr;
   repoint_field_to_record(table, table->record[0], record);
