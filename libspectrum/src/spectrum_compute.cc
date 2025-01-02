@@ -168,7 +168,7 @@ int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const ch
     assert(false);
   }
 
-  sql_print_information("spectrum_compute_delete_table[%s:%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
+  sql_print_information("spectrum_compute_delete_table[%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -179,11 +179,11 @@ int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const ch
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->DeleteTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_delete_table[%s:%s:%s]: error=%s", schema_def->name().c_str(), table_def->name().c_str(), status.error_message().c_str());
+    sql_print_error("spectrum_compute_delete_table[%s:%s]: error=%s", schema_def->name().c_str(), table_def->name().c_str(), status.error_message().c_str());
     assert(false);
   }
 
-  spectrum_log_delete_table(thd, table_def, table_path);
+  spectrum_log_delete_table(thd, schema_def, table_def, table_path);
 
   return 0;
 }
@@ -703,6 +703,8 @@ int spectrum_compute_update_metadata(THD *thd, const T *object) {
     assert(false);
   }
 
+  spectrum_log_update_metadata(thd, table_name, object->id(), object->name().c_str());
+
   return 0;
 }
 
@@ -838,6 +840,8 @@ int spectrum_compute_post_ddl(THD *thd) {
     sql_print_error("spectrum_compute_post_ddl: error=%s", status.error_message().c_str());
     assert(false);
   }
+
+  spectrum_log_post_ddl(thd);
 
   return 0;
 }

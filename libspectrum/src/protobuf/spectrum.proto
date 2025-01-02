@@ -34,7 +34,17 @@ service StorageNode {
   rpc Commit(CommitRequest) returns (CommitResponse) {} 
 
   rpc ReplicateRow(ReplicateRowRequest) returns (ReplicateRowResponse) {} 
+}
 
+service StorageReplicaNode {
+  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse) {}
+
+  rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
+  rpc DeleteTable(DeleteTableRequest) returns (DeleteTableResponse) {}
+  rpc PostDDL(PostDDLRequest) returns (PostDDLResponse) {}
+
+  rpc ReplicateRow(ReplicateRowRequest) returns (ReplicateRowResponse) {} 
+  rpc Commit(CommitRequest) returns (CommitResponse) {} 
 }
 
 message SystemVariables {

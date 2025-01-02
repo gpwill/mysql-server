@@ -86,11 +86,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "spectrum.h"
 #include "spectrum.grpc.pb.h"
 
-std::unique_ptr<spectrum::StorageNode::Stub> storage_replica_client;
-spectrum::StorageNode::Stub* get_storage_replica_client() {
+std::unique_ptr<spectrum::StorageReplicaNode::Stub> storage_replica_client;
+spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   if (!storage_replica_client) {
     std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64001", grpc::InsecureChannelCredentials());
-    storage_replica_client = spectrum::StorageNode::NewStub(channel);
+    storage_replica_client = spectrum::StorageReplicaNode::NewStub(channel);
   }
   return storage_replica_client.get();
 }
@@ -99,7 +99,7 @@ int spectrum_log_create_table(THD *thd, TABLE *table) {
   spectrum::CreateTableRequest request;
   spectrum::CreateTableResponse response;
   
-  sql_print_information("spectrum_log_create_table[%s:%d]: satrt", table->s->table_name.str, table->file);
+  sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", table->s->db.str, table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -110,28 +110,18 @@ int spectrum_log_create_table(THD *thd, TABLE *table) {
   grpc::ClientContext context;
   grpc::Status status = get_storage_replica_client()->CreateTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_log_create_table[%s:%d]: error=%s",
-        request.table().c_str(), table->file, status.error_message().c_str());
+    sql_print_error("spectrum_log_create_table[%s:%s:%d]: error=%s",
+        request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
     return 1;
   }
   return 0;
 }
 
-int spectrum_log_delete_table(THD *thd, const dd::Table *table_def, const char* table_path) {
+int spectrum_log_delete_table(THD *thd, const dd::Schema *schema_def, const dd::Table *table_def, const char* table_path) {
   spectrum::DeleteTableRequest request;
   spectrum::DeleteTableResponse response;
 
-  if (thd->spectrum_compute_disabled) {
-    return 0;
-  }
-
-  sql_print_information("spectrum_log_delete_table[%s]: satrt", table_path);
-
-  const dd::Schema *schema_def = nullptr;
-  thd->dd_client()->acquire(table_def->schema_id(), &schema_def);
-  if (!schema_def) {
-    assert(false);
-  }
+  sql_print_information("spectrum_log_delete_table[%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -142,8 +132,47 @@ int spectrum_log_delete_table(THD *thd, const dd::Table *table_def, const char* 
   grpc::ClientContext context;
   grpc::Status status = get_storage_replica_client()->DeleteTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_log_delete_table[%s]: error=%s", table_path, status.error_message().c_str());
-    return 1;
+    sql_print_error("spectrum_log_delete_table[%s:%s]: error=%s", schema_def->name().c_str(), table_def->name().c_str(), status.error_message().c_str());
+  }
+
+  return 0;
+}
+
+int spectrum_log_post_ddl(THD *thd) {
+  spectrum::PostDDLRequest request;
+  spectrum::PostDDLResponse response;
+
+  sql_print_information("spectrum_log_post_ddl: satrt");
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+
+  grpc::ClientContext context;
+  grpc::Status status = get_storage_replica_client()->PostDDL(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_log_post_ddl: error=%s", status.error_message().c_str());
+  }
+
+  return 0;
+}
+
+int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id object_id, const char* object_name) {
+  spectrum::UpdateMetadataRequest request;
+  spectrum::UpdateMetadataResponse response;
+  grpc::ClientContext context;
+
+  sql_print_information("spectrum_log_update_metadata: table=%s, object_name=%s, object_id=%d",
+      table, object_name, object_id);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_table(table);
+  request.set_object_id(object_id);
+  request.set_object_name(object_name);
+
+  grpc::Status status = get_storage_replica_client()->UpdateMetadata(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_log_update_metadata: error=%s", status.error_message().c_str());
   }
 
   return 0;
@@ -169,7 +198,7 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
 
   grpc::Status status = get_storage_replica_client()->ReplicateRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_log_replicate_row[%s:%d]: error=%s", table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_log_replicate_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     return 1;
   }
   return 0;
