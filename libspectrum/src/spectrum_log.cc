@@ -224,6 +224,44 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
   return 0;
 }
 
+int spectrum_log_prepare(THD *thd, handlerton *ht, bool all) {
+  Ha_trx_info *ha_trx_info = thd->get_ha_data(ht->slot)->ha_info + (all ? 1 : 0);
+  if (!ha_trx_info->is_trx_read_write()) {
+    sql_print_information("spectrum_log_prepare: skip for read only transaction");
+    return 0;
+  }
+
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
+
+  sql_print_information("spectrum_log_prepare: all=%d", all);
+
+  request.set_event_id(next_event_id());
+
+  spectrum::PrepareRequest *event = request.mutable_prepare_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  event->set_all(all);
+
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_prepare: stream write error");
+    return HA_ERR_GENERIC;
+  }
+
+  // Do not wait for response for non-autocommit statement prepare
+  if (!all && thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN)) {
+    return 0;
+  }
+  
+  do {
+    if (!get_storage_replica_stream()->Read(&response)) {
+      sql_print_error("spectrum_log_prepare: stream read error");
+      return HA_ERR_GENERIC;
+    }
+  } while(response.event_id() != request.event_id());
+  return 0;
+}
+
 int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock) {
   Ha_trx_info *ha_trx_info = thd->get_ha_data(ht->slot)->ha_info + (all ? 1 : 0);
   if (!ha_trx_info->is_trx_read_write()) {
@@ -249,10 +287,8 @@ int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_r
     return HA_ERR_GENERIC;
   }
 
-  // Do not wait for commit response if not an actual commit
-  bool will_commit = all ||
-      (!thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN));
-  if (!will_commit) {
+  // Do not wait for response for non-autocommit statement commit
+  if (!all && thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN)) {
     return 0;
   }
   

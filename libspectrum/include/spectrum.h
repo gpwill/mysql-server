@@ -66,6 +66,7 @@ extern int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uc
 extern int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record);
 extern int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record, uchar *new_record);
 extern int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record);
+extern int spectrum_compute_prepare(THD *thd, handlerton *ht, bool all);
 extern int spectrum_compute_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock);
 extern int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly);
 extern int spectrum_compute_end_attachable_transaction(THD *thd);
@@ -78,6 +79,7 @@ extern int spectrum_log_delete_table(THD *thd, const dd::Schema *schema_def, con
 extern int spectrum_log_post_ddl(THD *thd);
 extern int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id object_id, const char* object_name);
 extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
+extern int spectrum_log_prepare(THD *thd, handlerton *ht, bool all);
 extern int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock);
 
 #endif

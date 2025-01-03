@@ -3872,8 +3872,6 @@ dberr_t Validate_files::validate(const DD_tablespaces &tablespaces) {
 
   ib::info(ER_IB_MSG_532) << "Reading DD tablespace files";
 
-  spectrum_debug = true;
-
   if (dc->fetch_global_components(&tablespaces)) {
     /* Failed to fetch the tablespaces from the DD. */
 
@@ -20140,7 +20138,7 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
                                                  SQL statement ended */
 {
   if (is_spectrum_compute()) {
-    return 0;
+    return spectrum_compute_prepare(thd, hton, prepare_trx);
   }
 
   trx_t *trx = check_trx_exists(thd);

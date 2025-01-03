@@ -608,6 +608,32 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
   return 0;
 }
 
+int spectrum_compute_prepare(THD *thd, handlerton *ht, bool all) {
+  spectrum::PrepareRequest request;
+  spectrum::PrepareResponse response;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_prepare: all=%d", all);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_all(all);
+
+  grpc::ClientContext context;
+  grpc::Status status = get_storage_client()->Prepare(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_prepare: error=%s", status.error_message().c_str());
+    assert(false);
+  }
+
+  spectrum_log_prepare(thd, ht, all);
+
+  return 0;
+}
+
 int spectrum_compute_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock) {
   spectrum::CommitRequest request;
   spectrum::CommitResponse response;

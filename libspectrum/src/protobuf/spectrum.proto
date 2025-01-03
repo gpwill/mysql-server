@@ -31,6 +31,8 @@ service StorageNode {
   rpc WriteRow(WriteRowRequest) returns (WriteRowResponse) {} 
   rpc UpdateRow(UpdateRowRequest) returns (UpdateRowResponse) {} 
   rpc DeleteRow(DeleteRowRequest) returns (DeleteRowResponse) {} 
+
+  rpc Prepare(PrepareRequest) returns (PrepareResponse) {}
   rpc Commit(CommitRequest) returns (CommitResponse) {} 
 
   rpc ReplicateRow(ReplicateRowRequest) returns (ReplicateRowResponse) {} 
@@ -47,8 +49,9 @@ message SystemVariables {
 message Thread {
   int64 id = 1;
   int32 tx_isolation = 2;
-  int32 sql_command = 3;
-  SystemVariables system_variables = 4;
+  int64 query_id = 3;
+  int32 sql_command = 4;
+  SystemVariables system_variables = 5;
 }
 
 message Row {
@@ -322,6 +325,14 @@ message DeleteRowRequest {
 message DeleteRowResponse {
 }
 
+message PrepareRequest {
+  Thread thread = 1;
+  bool all = 2;
+}
+
+message PrepareResponse {
+}
+
 message CommitRequest {
   Thread thread = 1;
   bool all = 2;
@@ -368,7 +379,8 @@ message ReplicateRequest {
     PostDDLRequest post_ddl_event = 4;
     UpdateMetadataRequest update_metadata_event = 5;
     ReplicateRowRequest replicate_row_event = 6;
-    CommitRequest commit_event = 7;
+    PrepareRequest prepare_event = 7;
+    CommitRequest commit_event = 8;
   }
 }
 

@@ -103,6 +103,7 @@ THD *create_thd(const spectrum::Thread &spectrum_thread)
   thd->store_globals();
   thd->lex->sql_command = (enum_sql_command)spectrum_thread.sql_command();
   thd->tx_isolation = (enum_tx_isolation)spectrum_thread.tx_isolation();
+  thd->query_id = (query_id_t)spectrum_thread.query_id();
   thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
 
   return (thd);
@@ -536,12 +537,19 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK;
     }
 
-    ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
-      THD *thd;
+    ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequest* request, ::spectrum::PrepareResponse* response) {
+      sql_print_information("Prepare: all=%d", request->all());
 
+      THD *thd = create_thd(request->thread());
+      ha_prepare_low(thd, request->all());
+
+      return grpc::Status::OK; 
+    }
+
+    ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
       sql_print_information("Commit: all=%d, ignore_global_read_lock=%d", request->all(), request->ignore_global_read_lock());
 
-      thd = create_thd(request->thread());
+      THD *thd = create_thd(request->thread());
 
       // Disable 2pc commit
       Transaction_ctx *trn_ctx = thd->get_transaction();
@@ -740,8 +748,13 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       }
       key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
       
-      table->reginfo.lock_type = lock_type;
-      thd->lock = mysql_lock_tables(thd, &table, 1, 0);
+      // Only lock if unlocked, ha_external_lock doesn't accept consecutive locks
+      if (table->file->get_lock_type() == F_UNLCK) {
+        table->reginfo.lock_type = lock_type;
+        MYSQL_LOCK *lock = mysql_lock_tables(thd, &table, 1, 0);
+        thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
+      }
+
       if (request->has_old_row()) {
         table->file->ha_index_init(table->s->primary_key, false);
         table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT);
@@ -759,7 +772,6 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         spectrum_print_row("ReplicateRowNew", table, table->record[0]);
         err = table->file->ha_write_row(table->record[0]);
       }
-      mysql_unlock_some_tables(thd, &table, 1);
 
       if (err) {
         sql_print_error("ReplicateRow[%s:%s:%d]: error=%d", request->database().c_str(), request->table().c_str(), request->handler(), err);
@@ -767,12 +779,18 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       return 0;
     }
 
-    int Commit(const ::spectrum::CommitRequest* request) {
-      THD *thd;
+    int Prepare(const ::spectrum::PrepareRequest* request) {
+      sql_print_information("Prepare: all=%d", request->all());
 
+      THD *thd = create_thd(request->thread());
+      ha_prepare_low(thd, request->all());
+      return 0;
+    }
+
+    int Commit(const ::spectrum::CommitRequest* request) {
       sql_print_information("Commit: all=%d, ignore_global_read_lock=%d", request->all(), request->ignore_global_read_lock());
 
-      thd = create_thd(request->thread());
+      THD *thd = create_thd(request->thread());
 
       close_thread_tables(thd);
 
@@ -809,6 +827,11 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
           } else if (request.has_replicate_row_event()) {
             spectrum::ReplicateRowRequest event = request.replicate_row_event();
             ReplicateRow(&event);
+          } else if (request.has_prepare_event()) {
+            spectrum::PrepareRequest event = request.prepare_event();
+            Prepare(&event);
+            response.set_event_id(request.event_id());
+            stream->Write(response);
           } else if (request.has_commit_event()) {
             spectrum::CommitRequest event = request.commit_event();
             Commit(&event);

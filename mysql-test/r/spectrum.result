@@ -1,6 +1,6 @@
-drop database if exists spectrum_test_72;
-create database spectrum_test_72;
-use spectrum_test_72;
+drop database if exists spectrum_test_76;
+create database spectrum_test_76;
+use spectrum_test_76;
 create table employees (id INT PRIMARY KEY, first_name VARCHAR(50) NOT NULL, last_name VARCHAR(50) NOT NULL, hire_date DATE, salary DECIMAL(10, 2));
 insert into employees (id, first_name, last_name, hire_date, salary) VALUES (2, 'Peng', 'Gu', '2024-12-01', 60000.00);
 insert into employees (id, first_name, last_name, hire_date, salary) VALUES (1, 'John', 'Doe', '2024-12-01', 50000.00);
@@ -12,7 +12,7 @@ update employees set salary=555 where id=1;
 select * from employees where id=1;
 id	first_name	last_name	hire_date	salary
 1	John	Doe	2024-12-01	555.00
-use spectrum_test_72;
+use spectrum_test_76;
 select * from employees;
 id	first_name	last_name	hire_date	salary
 1	John	Doe	2024-12-01	555.00
