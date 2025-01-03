@@ -224,7 +224,13 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
   return 0;
 }
 
-int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock) {
+int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock) {
+  Ha_trx_info *ha_trx_info = thd->get_ha_data(ht->slot)->ha_info + (all ? 1 : 0);
+  if (!ha_trx_info->is_trx_read_write()) {
+    sql_print_information("spectrum_log_commit: skip for read only transaction");
+    return 0;
+  }
+
   spectrum::ReplicateRequest request;
   spectrum::ReplicateResponse response;
 

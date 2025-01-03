@@ -608,7 +608,7 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
   return 0;
 }
 
-int spectrum_compute_commit(THD *thd, bool all, bool ignore_global_read_lock) {
+int spectrum_compute_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock) {
   spectrum::CommitRequest request;
   spectrum::CommitResponse response;
 
@@ -630,7 +630,7 @@ int spectrum_compute_commit(THD *thd, bool all, bool ignore_global_read_lock) {
     assert(false);
   }
 
-  spectrum_log_commit(thd, all, ignore_global_read_lock);
+  spectrum_log_commit(thd, ht, all, ignore_global_read_lock);
 
   return 0;
 }
