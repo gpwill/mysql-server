@@ -634,7 +634,7 @@ int spectrum_compute_prepare(THD *thd, handlerton *ht, bool all) {
   return 0;
 }
 
-int spectrum_compute_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock) {
+int spectrum_compute_commit(THD *thd, handlerton *ht, bool all) {
   spectrum::CommitRequest request;
   spectrum::CommitResponse response;
 
@@ -642,12 +642,11 @@ int spectrum_compute_commit(THD *thd, handlerton *ht, bool all, bool ignore_glob
     return 0;
   }
 
-  sql_print_information("spectrum_commit: all=%d, ignore_global_read_lock=%d", all, ignore_global_read_lock);
+  sql_print_information("spectrum_commit: all=%d", all);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
   request.set_all(all);
-  request.set_ignore_global_read_lock(ignore_global_read_lock);
 
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->Commit(&context, request, &response);
@@ -656,7 +655,7 @@ int spectrum_compute_commit(THD *thd, handlerton *ht, bool all, bool ignore_glob
     assert(false);
   }
 
-  spectrum_log_commit(thd, ht, all, ignore_global_read_lock);
+  spectrum_log_commit(thd, ht, all);
 
   return 0;
 }

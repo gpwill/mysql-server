@@ -5782,7 +5782,7 @@ static int innobase_commit(handlerton *hton, /*!< in: InnoDB handlerton */
   DEBUG_SYNC_C("transaction_commit_start");
 
   if (is_spectrum_compute()) {
-    return spectrum_compute_commit(thd, hton, commit_trx, true);
+    return spectrum_compute_commit(thd, hton, commit_trx);
   }
 
   trx_t *trx = check_trx_exists(thd);

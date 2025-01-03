@@ -262,7 +262,7 @@ int spectrum_log_prepare(THD *thd, handlerton *ht, bool all) {
   return 0;
 }
 
-int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_read_lock) {
+int spectrum_log_commit(THD *thd, handlerton *ht, bool all) {
   Ha_trx_info *ha_trx_info = thd->get_ha_data(ht->slot)->ha_info + (all ? 1 : 0);
   if (!ha_trx_info->is_trx_read_write()) {
     sql_print_information("spectrum_log_commit: skip for read only transaction");
@@ -272,7 +272,7 @@ int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_r
   spectrum::ReplicateRequest request;
   spectrum::ReplicateResponse response;
 
-  sql_print_information("spectrum_log_commit: all=%d, ignore_global_read_lock=%d", all, ignore_global_read_lock);
+  sql_print_information("spectrum_log_commit: all=%d", all);
 
   request.set_event_id(next_event_id());
 
@@ -280,7 +280,6 @@ int spectrum_log_commit(THD *thd, handlerton *ht, bool all, bool ignore_global_r
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
   event->set_all(all);
-  event->set_ignore_global_read_lock(ignore_global_read_lock);
 
   if (!get_storage_replica_stream()->Write(request)) {
     sql_print_error("spectrum_log_commit: stream write error");

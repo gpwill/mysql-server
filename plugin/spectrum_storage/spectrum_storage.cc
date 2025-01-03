@@ -547,24 +547,11 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
     }
 
     ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
-      sql_print_information("Commit: all=%d, ignore_global_read_lock=%d", request->all(), request->ignore_global_read_lock());
+      sql_print_information("Commit: all=%d", request->all());
 
       THD *thd = create_thd(request->thread());
 
-      // Disable 2pc commit
-      Transaction_ctx *trn_ctx = thd->get_transaction();
-      trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::SESSION, true);
-      trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::STMT, true);
-      
-      if (thd->is_attachable_transaction_active()) {
-        assert(!request->all());
-        trans_commit_attachable(thd);
-      } else if (request->all()) {
-        trans_commit(thd, false);
-        //thd->mdl_context.release_transactional_locks();
-      } else {
-        trans_commit_stmt(thd, false);
-      }
+      ha_commit_low(thd, request->all(), false);
       return grpc::Status::OK; 
     }
 
@@ -788,22 +775,15 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
     }
 
     int Commit(const ::spectrum::CommitRequest* request) {
-      sql_print_information("Commit: all=%d, ignore_global_read_lock=%d", request->all(), request->ignore_global_read_lock());
+      sql_print_information("Commit: all=%d", request->all());
 
       THD *thd = create_thd(request->thread());
 
       close_thread_tables(thd);
 
-      // Disable 2pc commit
-      Transaction_ctx *trn_ctx = thd->get_transaction();
-      trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::SESSION, true);
-      trn_ctx->set_no_2pc(Transaction_ctx::enum_trx_scope::STMT, true);
-      
+      ha_commit_low(thd, request->all(), false);
       if (request->all()) {
-        trans_commit(thd, false);
         thd->mdl_context.release_transactional_locks();
-      } else {
-        trans_commit_stmt(thd, false);
       }
       return 0;
     }

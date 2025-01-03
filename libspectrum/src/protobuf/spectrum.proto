@@ -336,7 +336,6 @@ message PrepareResponse {
 message CommitRequest {
   Thread thread = 1;
   bool all = 2;
-  bool ignore_global_read_lock = 3;
 }
 
 message CommitResponse {
