@@ -37,14 +37,7 @@ service StorageNode {
 }
 
 service StorageReplicaNode {
-  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse) {}
-
-  rpc CreateTable(CreateTableRequest) returns (CreateTableResponse) {}
-  rpc DeleteTable(DeleteTableRequest) returns (DeleteTableResponse) {}
-  rpc PostDDL(PostDDLRequest) returns (PostDDLResponse) {}
-
-  rpc ReplicateRow(ReplicateRowRequest) returns (ReplicateRowResponse) {} 
-  rpc Commit(CommitRequest) returns (CommitResponse) {} 
+  rpc Replicate (stream ReplicateRequest) returns (stream ReplicateResponse);
 }
 
 message SystemVariables {
@@ -365,4 +358,18 @@ message ReplicateRowRequest {
 }
 
 message ReplicateRowResponse {
+}
+
+message ReplicateRequest {
+  oneof event {
+    CreateTableRequest create_table_event = 1;
+    DeleteTableRequest delete_table_event = 2;
+    PostDDLRequest post_ddl_event = 3;
+    UpdateMetadataRequest update_metadata_event = 4;
+    ReplicateRowRequest replicate_row_event = 5;
+    CommitRequest commit_event = 6;
+  }
+}
+
+message ReplicateResponse {
 }

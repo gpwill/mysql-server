@@ -95,134 +95,138 @@ spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   return storage_replica_client.get();
 }
 
+std::unique_ptr<grpc::ClientReaderWriter<spectrum::ReplicateRequest, spectrum::ReplicateResponse>> storage_replica_stream;
+grpc::ClientReaderWriter<spectrum::ReplicateRequest, spectrum::ReplicateResponse> *get_storage_replica_stream() {
+  if (!storage_replica_stream) {
+    grpc::ClientContext *stream_context = new grpc::ClientContext();
+    storage_replica_stream = get_storage_replica_client()->Replicate(stream_context);
+  }
+  return storage_replica_stream.get();
+}
+
 int spectrum_log_create_table(THD *thd, TABLE *table) {
-  spectrum::CreateTableRequest request;
-  spectrum::CreateTableResponse response;
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
   
   sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", table->s->db.str, table->s->table_name.str, table->file);
 
-  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum::CreateTableRequest *event = request.mutable_create_table_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  request.set_database(table->s->db.str);
-  request.set_table(table->s->table_name.str);
-  request.set_handler((uint64)table->file);
+  event->set_database(table->s->db.str);
+  event->set_table(table->s->table_name.str);
+  event->set_handler((uint64)table->file);
 
-  grpc::ClientContext context;
-  grpc::Status status = get_storage_replica_client()->CreateTable(&context, request, &response);
-  if (!status.ok()) {
-    sql_print_error("spectrum_log_create_table[%s:%s:%d]: error=%s",
-        request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
-    return 1;
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_create_table[%s:%s:%d]: stream write error",
+        event->database().c_str(), event->table().c_str(), table->file);
   }
   return 0;
 }
 
 int spectrum_log_delete_table(THD *thd, const dd::Schema *schema_def, const dd::Table *table_def, const char* table_path) {
-  spectrum::DeleteTableRequest request;
-  spectrum::DeleteTableResponse response;
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
 
   sql_print_information("spectrum_log_delete_table[%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
 
-  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum::DeleteTableRequest *event = request.mutable_delete_table_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  request.set_database(schema_def->name().c_str());
-  request.set_table(table_def->name().c_str());
-  request.set_table_path(table_path);
+  event->set_database(schema_def->name().c_str());
+  event->set_table(table_def->name().c_str());
+  event->set_table_path(table_path);
 
-  grpc::ClientContext context;
-  grpc::Status status = get_storage_replica_client()->DeleteTable(&context, request, &response);
-  if (!status.ok()) {
-    sql_print_error("spectrum_log_delete_table[%s:%s]: error=%s", schema_def->name().c_str(), table_def->name().c_str(), status.error_message().c_str());
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_delete_table[%s:%s]: stream write error", schema_def->name().c_str(), table_def->name().c_str());
   }
-
   return 0;
 }
 
 int spectrum_log_post_ddl(THD *thd) {
-  spectrum::PostDDLRequest request;
-  spectrum::PostDDLResponse response;
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
 
   sql_print_information("spectrum_log_post_ddl: satrt");
 
-  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum::PostDDLRequest *event = request.mutable_post_ddl_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
 
-  grpc::ClientContext context;
-  grpc::Status status = get_storage_replica_client()->PostDDL(&context, request, &response);
-  if (!status.ok()) {
-    sql_print_error("spectrum_log_post_ddl: error=%s", status.error_message().c_str());
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_post_ddl: stream write error");
+    return HA_ERR_GENERIC;
   }
-
   return 0;
 }
 
 int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id object_id, const char* object_name) {
-  spectrum::UpdateMetadataRequest request;
-  spectrum::UpdateMetadataResponse response;
-  grpc::ClientContext context;
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
 
   sql_print_information("spectrum_log_update_metadata: table=%s, object_name=%s, object_id=%d",
       table, object_name, object_id);
 
-  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum::UpdateMetadataRequest *event = request.mutable_update_metadata_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  request.set_table(table);
-  request.set_object_id(object_id);
-  request.set_object_name(object_name);
+  event->set_table(table);
+  event->set_object_id(object_id);
+  event->set_object_name(object_name);
 
-  grpc::Status status = get_storage_replica_client()->UpdateMetadata(&context, request, &response);
-  if (!status.ok()) {
-    sql_print_error("spectrum_log_update_metadata: error=%s", status.error_message().c_str());
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_update_metadata: stream write error");
+    return HA_ERR_GENERIC;
   }
-
   return 0;
 }
 
 int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row) {
-  spectrum::ReplicateRowRequest request;
-  spectrum::ReplicateRowResponse response;
-  grpc::ClientContext context;
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
 
   spectrum_print_row("spectrum_log_replicate_row_new", table, new_row);
   spectrum_print_row("spectrum_log_replicate_old_new", table, old_row);
 
-  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum::ReplicateRowRequest *event = request.mutable_replicate_row_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  request.set_database(table->s->db.str);
-  request.set_table(table->s->table_name.str);
-  request.set_handler((uint64)table->file);
-  request.set_lock_type(table->reginfo.lock_type);
-  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
+  event->set_database(table->s->db.str);
+  event->set_table(table->s->table_name.str);
+  event->set_handler((uint64)table->file);
+  event->set_lock_type(table->reginfo.lock_type);
+  event->set_lock_action(table->pos_in_table_list->lock_descriptor().type);
 
-  if (new_row) spectrum_row_fill_fields(table, new_row, request.mutable_new_row());
-  if (old_row) spectrum_row_fill_fields(table, old_row, request.mutable_old_row());
+  if (new_row) spectrum_row_fill_fields(table, new_row, event->mutable_new_row());
+  if (old_row) spectrum_row_fill_fields(table, old_row, event->mutable_old_row());
 
-  grpc::Status status = get_storage_replica_client()->ReplicateRow(&context, request, &response);
-  if (!status.ok()) {
-    sql_print_error("spectrum_log_replicate_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
-    return 1;
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_replicate_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
+    return HA_ERR_GENERIC;
   }
   return 0;
 }
 
 int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock) {
-  spectrum::CommitRequest request;
-  spectrum::CommitResponse response;
+  spectrum::ReplicateRequest request;
+  spectrum::ReplicateResponse response;
 
   sql_print_information("spectrum_log_commit: all=%d, ignore_global_read_lock=%d", all, ignore_global_read_lock);
 
-  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum::CommitRequest *event = request.mutable_commit_event();
+  spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  request.set_all(all);
-  request.set_ignore_global_read_lock(ignore_global_read_lock);
+  event->set_all(all);
+  event->set_ignore_global_read_lock(ignore_global_read_lock);
 
-  {
-    grpc::ClientContext context;
-    grpc::Status status = get_storage_replica_client()->Commit(&context, request, &response);
-    if (!status.ok()) {
-      sql_print_error("spectrum_log_commit: error=%s", status.error_message().c_str());
-      return 1;
-    }
+  if (!get_storage_replica_stream()->Write(request)) {
+    sql_print_error("spectrum_log_commit: stream write error");
+    return HA_ERR_GENERIC;
+  }
+  
+  if (!get_storage_replica_stream()->Read(&response)) {
+    sql_print_error("spectrum_log_commit: stream read error");
+    return HA_ERR_GENERIC;
   }
   return 0;
 }

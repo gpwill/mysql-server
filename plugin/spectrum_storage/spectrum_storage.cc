@@ -682,7 +682,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
 class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Service {
   public:
-    ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
+    int CreateTable(const ::spectrum::CreateTableRequest* request) {
       THD *thd;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
@@ -690,10 +690,10 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       thd = create_thd(request->thread());
       create_table(thd, db_name, table_name, handler_id);
-      return grpc::Status::OK;
+      return 0;
     }
 
-    ::grpc::Status DeleteTable(::grpc::ServerContext* context, const ::spectrum::DeleteTableRequest* request, ::spectrum::DeleteTableResponse* response) {
+    int DeleteTable(const ::spectrum::DeleteTableRequest* request) {
       THD *thd;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
@@ -701,16 +701,16 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       thd = create_thd(request->thread());
       delete_table(thd, db_name, table_name, table_path);
-      return grpc::Status::OK; 
+      return 0;
     }
 
-    ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
+    int PostDDL(const ::spectrum::PostDDLRequest* request) {
       THD *thd = create_thd(request->thread());
       post_ddl(thd);
-      return grpc::Status::OK; 
+      return 0;
     }
 
-    ::grpc::Status UpdateMetadata(::grpc::ServerContext* context, const ::spectrum::UpdateMetadataRequest* request, ::spectrum::UpdateMetadataResponse* response) {
+    int UpdateMetadata(const ::spectrum::UpdateMetadataRequest* request) {
       THD *thd;
       const std::string& table = request->table();
       const dd::Object_id object_id = request->object_id();
@@ -718,10 +718,10 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       thd = create_thd(request->thread());
       update_metadata(thd, table.c_str(), object_id, object_name.c_str());
-      return grpc::Status::OK; 
+      return 0;
     }
 
-    ::grpc::Status ReplicateRow(::grpc::ServerContext* context, const ::spectrum::ReplicateRowRequest* request, ::spectrum::ReplicateRowResponse* response) {
+    int ReplicateRow(const ::spectrum::ReplicateRowRequest* request) {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = TL_WRITE;
@@ -764,10 +764,10 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       if (err) {
         sql_print_error("ReplicateRow[%s:%s:%d]: error=%d", request->database().c_str(), request->table().c_str(), request->handler(), err);
       }
-      return grpc::Status::OK; 
+      return 0;
     }
 
-    ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
+    int Commit(const ::spectrum::CommitRequest* request) {
       THD *thd;
 
       sql_print_information("Commit: all=%d, ignore_global_read_lock=%d", request->all(), request->ignore_global_read_lock());
@@ -787,7 +787,35 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       } else {
         trans_commit_stmt(thd, false);
       }
-      return grpc::Status::OK; 
+      return 0;
+    }
+
+    grpc::Status Replicate(grpc::ServerContext* context, grpc::ServerReaderWriter<spectrum::ReplicateResponse, spectrum::ReplicateRequest>* stream) override {
+        spectrum::ReplicateRequest request;
+        spectrum::ReplicateResponse response;
+        while (stream->Read(&request)) {
+          if (request.has_create_table_event()) {
+            spectrum::CreateTableRequest event = request.create_table_event();
+            CreateTable(&event);
+          } else if (request.has_delete_table_event()) {
+            spectrum::DeleteTableRequest event = request.delete_table_event();
+            DeleteTable(&event);
+          } else if (request.has_post_ddl_event()) {
+            spectrum::PostDDLRequest event = request.post_ddl_event();
+            PostDDL(&event);
+          } else if (request.has_update_metadata_event()) {
+            spectrum::UpdateMetadataRequest event = request.update_metadata_event();
+            UpdateMetadata(&event);
+          } else if (request.has_replicate_row_event()) {
+            spectrum::ReplicateRowRequest event = request.replicate_row_event();
+            ReplicateRow(&event);
+          } else if (request.has_commit_event()) {
+            spectrum::CommitRequest event = request.commit_event();
+            Commit(&event);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status::OK;
     }
 };
 
