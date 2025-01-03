@@ -71,6 +71,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <my_check_opt.h>
 #include <mysql/service_thd_alloc.h>
 #include <mysql/service_thd_wait.h>
+#include <mysql/plugin.h>
 #include <mysql_com.h>
 #include <sql_string.h>
 #include <sql_tablespace.h>
@@ -240,6 +241,13 @@ int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock) {
   if (!get_storage_replica_stream()->Write(request)) {
     sql_print_error("spectrum_log_commit: stream write error");
     return HA_ERR_GENERIC;
+  }
+
+  // Do not wait for commit response if not an actual commit
+  bool will_commit = all ||
+      (!thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN));
+  if (!will_commit) {
+    return 0;
   }
   
   do {
