@@ -86,6 +86,12 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "spectrum.h"
 #include "spectrum.grpc.pb.h"
 
+typedef uint64 event_id_t;
+std::atomic<event_id_t> atomic_event_id;
+inline event_id_t next_event_id() {
+  return ++atomic_event_id;
+}
+
 std::unique_ptr<spectrum::StorageReplicaNode::Stub> storage_replica_client;
 spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   if (!storage_replica_client) {
@@ -110,6 +116,8 @@ int spectrum_log_create_table(THD *thd, TABLE *table) {
   
   sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", table->s->db.str, table->s->table_name.str, table->file);
 
+  request.set_event_id(next_event_id());
+
   spectrum::CreateTableRequest *event = request.mutable_create_table_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -130,6 +138,8 @@ int spectrum_log_delete_table(THD *thd, const dd::Schema *schema_def, const dd::
 
   sql_print_information("spectrum_log_delete_table[%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
 
+  request.set_event_id(next_event_id());
+
   spectrum::DeleteTableRequest *event = request.mutable_delete_table_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -149,6 +159,8 @@ int spectrum_log_post_ddl(THD *thd) {
 
   sql_print_information("spectrum_log_post_ddl: satrt");
 
+  request.set_event_id(next_event_id());
+
   spectrum::PostDDLRequest *event = request.mutable_post_ddl_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -166,6 +178,8 @@ int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id obje
 
   sql_print_information("spectrum_log_update_metadata: table=%s, object_name=%s, object_id=%d",
       table, object_name, object_id);
+
+  request.set_event_id(next_event_id());
 
   spectrum::UpdateMetadataRequest *event = request.mutable_update_metadata_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
@@ -187,6 +201,8 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
 
   spectrum_print_row("spectrum_log_replicate_row_new", table, new_row);
   spectrum_print_row("spectrum_log_replicate_old_new", table, old_row);
+
+  request.set_event_id(next_event_id());
 
   spectrum::ReplicateRowRequest *event = request.mutable_replicate_row_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
@@ -213,6 +229,8 @@ int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock) {
 
   sql_print_information("spectrum_log_commit: all=%d, ignore_global_read_lock=%d", all, ignore_global_read_lock);
 
+  request.set_event_id(next_event_id());
+
   spectrum::CommitRequest *event = request.mutable_commit_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -224,9 +242,11 @@ int spectrum_log_commit(THD *thd, bool all, bool ignore_global_read_lock) {
     return HA_ERR_GENERIC;
   }
   
-  if (!get_storage_replica_stream()->Read(&response)) {
-    sql_print_error("spectrum_log_commit: stream read error");
-    return HA_ERR_GENERIC;
-  }
+  do {
+    if (!get_storage_replica_stream()->Read(&response)) {
+      sql_print_error("spectrum_log_commit: stream read error");
+      return HA_ERR_GENERIC;
+    }
+  } while(response.event_id() != request.event_id());
   return 0;
 }

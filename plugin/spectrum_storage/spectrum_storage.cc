@@ -812,6 +812,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
           } else if (request.has_commit_event()) {
             spectrum::CommitRequest event = request.commit_event();
             Commit(&event);
+            response.set_event_id(request.event_id());
             stream->Write(response);
           }
         }
