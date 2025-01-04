@@ -5782,7 +5782,7 @@ static int innobase_commit(handlerton *hton, /*!< in: InnoDB handlerton */
   DEBUG_SYNC_C("transaction_commit_start");
 
   if (is_spectrum_compute()) {
-    return spectrum_compute_commit(thd, hton, commit_trx);
+    return spectrum_compute_commit(thd, commit_trx);
   }
 
   trx_t *trx = check_trx_exists(thd);
@@ -20138,7 +20138,7 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
                                                  SQL statement ended */
 {
   if (is_spectrum_compute()) {
-    return spectrum_compute_prepare(thd, hton, prepare_trx);
+    return spectrum_compute_prepare(thd, prepare_trx);
   }
 
   trx_t *trx = check_trx_exists(thd);

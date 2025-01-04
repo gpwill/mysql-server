@@ -133,7 +133,7 @@ int spectrum_compute_create_table(THD *thd, TABLE *table) {
     return 0;
   }
   
-  sql_print_information("spectrum_create_table[%s:%s:%d]: satrt", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_create_table[%d:%s:%s:%d]: satrt", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -144,12 +144,10 @@ int spectrum_compute_create_table(THD *thd, TABLE *table) {
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->CreateTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_create_table[%s:%s:%d]: error=%s",
-        request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
+    sql_print_error("spectrum_create_table[%d:%s:%s:%d]: error=%s",
+        thd->spectrum_thread_id, request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_create_table(thd, table);
 
   return 0;
 }
@@ -168,7 +166,7 @@ int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const ch
     assert(false);
   }
 
-  sql_print_information("spectrum_compute_delete_table[%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
+  sql_print_information("spectrum_compute_delete_table[%d:%s:%s]: table_path=%s", thd->spectrum_thread_id, schema_def->name().c_str(), table_def->name().c_str(), table_path);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -179,11 +177,9 @@ int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const ch
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->DeleteTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_delete_table[%s:%s]: error=%s", schema_def->name().c_str(), table_def->name().c_str(), status.error_message().c_str());
+    sql_print_error("spectrum_compute_delete_table[%d:%s:%s]: error=%s", thd->spectrum_thread_id, schema_def->name().c_str(), table_def->name().c_str(), status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_delete_table(thd, schema_def, table_def, table_path);
 
   return 0;
 }
@@ -197,7 +193,7 @@ int spectrum_compute_lock_table(THD *thd, TABLE *table) {
     return 0;
   }
 
-  sql_print_information("spectrum_lock_table[%s:%s:%d]: lock_type=%d", table->s->db.str, table->s->table_name.str, table->file, table->reginfo.lock_type);
+  sql_print_information("spectrum_lock_table[%d:%s:%s:%d]: lock_type=%d", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, table->reginfo.lock_type);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -209,8 +205,8 @@ int spectrum_compute_lock_table(THD *thd, TABLE *table) {
 
   grpc::Status status = get_storage_client()->LockTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_lock_table[%s:%s:%d]: error=%s",
-        request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
+    sql_print_error("spectrum_lock_table[%d:%s:%s:%d]: error=%s",
+        thd->spectrum_thread_id, request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -225,7 +221,7 @@ int spectrum_compute_unlock_table(THD *thd, TABLE *table) {
     return 0;
   }
 
-  sql_print_information("spectrum_unlock_table[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_unlock_table[%d:%s:%s:%d]", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -237,8 +233,8 @@ int spectrum_compute_unlock_table(THD *thd, TABLE *table) {
 
   grpc::Status status = get_storage_client()->UnlockTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_unlock_table[%s:%s:%d]: error=%s",
-        request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
+    sql_print_error("spectrum_unlock_table[%d:%s:%s:%d]: error=%s",
+        thd->spectrum_thread_id, request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -253,7 +249,7 @@ int spectrum_compute_close_table(THD *thd, TABLE *table) {
     return 0;
   }
 
-  sql_print_information("spectrum_compute_close_table[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_compute_close_table[%d:%s:%s:%d]", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -263,8 +259,8 @@ int spectrum_compute_close_table(THD *thd, TABLE *table) {
 
   grpc::Status status = get_storage_client()->CloseTable(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_close_table[%s:%s:%d]: error=%s",
-        request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
+    sql_print_error("spectrum_compute_close_table[%d:%s:%s:%d]: error=%s",
+        thd->spectrum_thread_id, request.database().c_str(), request.table().c_str(), table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -279,7 +275,7 @@ int spectrum_compute_init_index(THD *thd, TABLE *table, uint index) {
     return 0;
   }
 
-  sql_print_information("spectrum_init_index[%s:%s:%d]: index=%d", table->s->db.str, table->s->table_name.str, table->file, index);
+  sql_print_information("spectrum_init_index[%d:%s:%s:%d]: index=%d", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, index);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -292,7 +288,7 @@ int spectrum_compute_init_index(THD *thd, TABLE *table, uint index) {
 
   grpc::Status status = get_storage_client()->InitIndex(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_init_index[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_init_index[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -307,7 +303,7 @@ int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan) {
     return 0;
   }
 
-  sql_print_information("spectrum_init_rnd[%s:%s:%d]: scan=%d", table->s->db.str, table->s->table_name.str, table->file, scan);
+  sql_print_information("spectrum_init_rnd[%d:%s:%s:%d]: scan=%d", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, scan);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -320,7 +316,7 @@ int spectrum_compute_init_rnd(THD *thd, TABLE *table, bool scan) {
 
   grpc::Status status = get_storage_client()->InitRnd(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_init_rnd[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_init_rnd[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -335,7 +331,7 @@ int spectrum_compute_end_index(THD *thd, TABLE *table) {
     return 0;
   }
 
-  sql_print_information("spectrum_end_index[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_end_index[%d:%s:%s:%d]", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -347,7 +343,7 @@ int spectrum_compute_end_index(THD *thd, TABLE *table) {
 
   grpc::Status status = get_storage_client()->EndIndex(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_end_index[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_end_index[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -362,7 +358,7 @@ int spectrum_compute_end_rnd(THD *thd, TABLE *table) {
     return 0;
   }
 
-  sql_print_information("spectrum_end_rnd[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_end_rnd[%d:%s:%s:%d]", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -374,7 +370,7 @@ int spectrum_compute_end_rnd(THD *thd, TABLE *table) {
 
   grpc::Status status = get_storage_client()->EndRnd(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_end_rnd[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_end_rnd[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -410,7 +406,7 @@ int spectrum_compute_read_row(THD *thd, TABLE *table, uint index,
 
   grpc::Status status = get_storage_client()->ReadRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_read_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_read_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
 
@@ -421,7 +417,7 @@ int spectrum_compute_read_row(THD *thd, TABLE *table, uint index,
     store_record(table, record[1]);
     return 0;
   }
-  sql_print_information("spectrum_read_row[%s:%s:%d]: record not found", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_read_row[%d:%s:%s:%d]: record not found", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
   return HA_ERR_KEY_NOT_FOUND;
 }
 
@@ -449,7 +445,7 @@ int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *bu
 
   grpc::Status status = get_storage_client()->ReadNextRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_read_next_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_read_next_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
 
@@ -460,7 +456,7 @@ int spectrum_compute_read_next_row(THD *thd, TABLE *table, uint index, uchar *bu
     store_record(table, record[1]);
     return 0;
   }
-  sql_print_information("spectrum_read_next_row[%s:%s:%d]: record not found", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_read_next_row[%d:%s:%s:%d]: record not found", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
   return HA_ERR_END_OF_FILE;
 }
 
@@ -487,7 +483,7 @@ int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *bu
 
   grpc::Status status = get_storage_client()->ReadPrevRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_read_prev_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_read_prev_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
 
@@ -498,7 +494,7 @@ int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uchar *bu
     store_record(table, record[1]);
     return 0;
   }
-  sql_print_information("spectrum_read_prev_row[%s:%s:%d]: record not found", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_read_prev_row[%d:%s:%s:%d]: record not found", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file);
   return HA_ERR_END_OF_FILE;
 }
 
@@ -527,13 +523,11 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
 
   grpc::Status status = get_storage_client()->WriteRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_write_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_write_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
   spectrum_row_extract_fields(table, (spectrum::Row *)&response.row());
   spectrum_print_row("spectrum_write_row_new", table);
-
-  spectrum_log_add_row(thd, table, record, nullptr);
 
   table->file->insert_id_for_cur_row = response.insert_id();
   return 0;
@@ -568,11 +562,9 @@ int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record,
 
   grpc::Status status = get_storage_client()->UpdateRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_update_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_update_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_add_row(thd, table, new_record, (uchar *)old_record);
 
   return 0;
 }
@@ -599,16 +591,14 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
 
   grpc::Status status = get_storage_client()->DeleteRow(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_delete_row[%s:%s:%d]: error=%s", table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
+    sql_print_error("spectrum_delete_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_add_row(thd, table, nullptr, (uchar *)record);
 
   return 0;
 }
 
-int spectrum_compute_prepare(THD *thd, handlerton *ht, bool all) {
+int spectrum_compute_prepare(THD *thd, bool all) {
   spectrum::PrepareRequest request;
   spectrum::PrepareResponse response;
 
@@ -616,7 +606,7 @@ int spectrum_compute_prepare(THD *thd, handlerton *ht, bool all) {
     return 0;
   }
 
-  sql_print_information("spectrum_prepare: all=%d", all);
+  sql_print_information("spectrum_prepare[%d]: all=%d", thd->spectrum_thread_id, all);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -625,16 +615,14 @@ int spectrum_compute_prepare(THD *thd, handlerton *ht, bool all) {
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->Prepare(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_prepare: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_prepare[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_prepare(thd, ht, all);
 
   return 0;
 }
 
-int spectrum_compute_commit(THD *thd, handlerton *ht, bool all) {
+int spectrum_compute_commit(THD *thd, bool all) {
   spectrum::CommitRequest request;
   spectrum::CommitResponse response;
 
@@ -642,7 +630,7 @@ int spectrum_compute_commit(THD *thd, handlerton *ht, bool all) {
     return 0;
   }
 
-  sql_print_information("spectrum_commit: all=%d", all);
+  sql_print_information("spectrum_commit[%d]: all=%d", thd->spectrum_thread_id, all);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -651,11 +639,9 @@ int spectrum_compute_commit(THD *thd, handlerton *ht, bool all) {
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->Commit(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_commit: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_commit[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_commit(thd, ht, all);
 
   return 0;
 }
@@ -669,7 +655,7 @@ int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly) {
     return 0;
   }
 
-  sql_print_information("spectrum_begin_attachable_transaction: readonly=%d", readonly);
+  sql_print_information("spectrum_begin_attachable_transaction[%d]: readonly=%d", thd->spectrum_thread_id, readonly);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -677,7 +663,7 @@ int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly) {
 
   grpc::Status status = get_storage_client()->BeginAttachableTransaction(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_begin_attachable_transaction: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_begin_attachable_transaction[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -692,14 +678,14 @@ int spectrum_compute_end_attachable_transaction(THD *thd) {
     return 0;
   }
 
-  sql_print_information("spectrum_end_attachable_transaction");
+  sql_print_information("spectrum_end_attachable_transaction[%d]", thd->spectrum_thread_id);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
 
   grpc::Status status = get_storage_client()->EndAttachableTransaction(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_end_attachable_transaction: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_end_attachable_transaction[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -716,8 +702,8 @@ int spectrum_compute_update_metadata(THD *thd, const T *object) {
     return 0;
   }
 
-  sql_print_information("spectrum_compute_update_metadata: table=%s, object_name=%s, object_id=%d",
-      table_name, object->name().c_str(), object->id());
+  sql_print_information("spectrum_compute_update_metadata[%d]: table=%s, object_name=%s, object_id=%d",
+      thd->spectrum_thread_id, table_name, object->name().c_str(), object->id());
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -727,11 +713,9 @@ int spectrum_compute_update_metadata(THD *thd, const T *object) {
 
   grpc::Status status = get_storage_client()->UpdateMetadata(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_update_metadata: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_compute_update_metadata[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_update_metadata(thd, table_name, object->id(), object->name().c_str());
 
   return 0;
 }
@@ -749,8 +733,8 @@ int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket) {
     return 0;
   }
 
-  sql_print_information("spectrum_compute_acquire_mdl: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d, ticket_number=%d",
-      mdl_key->mdl_namespace(), mdl_key->db_name(), mdl_key->name(), mdl_key->col_name(), type, duration, ticket_number);
+  sql_print_information("spectrum_compute_acquire_mdl[%d]: namespace=%d, db=%s, table=%s, column=%s, type=%d, duration=%d, ticket_number=%d",
+      thd->spectrum_thread_id, mdl_key->mdl_namespace(), mdl_key->db_name(), mdl_key->name(), mdl_key->col_name(), type, duration, ticket_number);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -764,7 +748,7 @@ int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket) {
 
   grpc::Status status = get_storage_client()->AcquireMetadataLock(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_acquire_mdl: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_compute_acquire_mdl[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
 
@@ -783,8 +767,8 @@ int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket *ticket, enum_mdl_type new
     return 0;
   }
 
-  sql_print_information("spectrum_compute_upgrade_mdl: duration=%d, ticket_number=%d, new_type=%d",
-      duration, ticket_number, new_type);
+  sql_print_information("spectrum_compute_upgrade_mdl[%d]: duration=%d, ticket_number=%d, new_type=%d",
+      thd->spectrum_thread_id, duration, ticket_number, new_type);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -794,7 +778,7 @@ int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket *ticket, enum_mdl_type new
 
   grpc::Status status = get_storage_client()->UpgradeMetadataLock(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_upgrade_mdl: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_compute_upgrade_mdl[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
 
@@ -810,8 +794,8 @@ int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 tic
     return 0;
   }
 
-  sql_print_information("spectrum_compute_release_mdl: duration=%d, ticket_number=%d",
-      duration, ticket_number);
+  sql_print_information("spectrum_compute_release_mdl[%d]: duration=%d, ticket_number=%d",
+      thd->spectrum_thread_id, duration, ticket_number);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -820,7 +804,7 @@ int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 tic
 
   grpc::Status status = get_storage_client()->ReleaseMetadataLock(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_release_mdl: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_compute_release_mdl[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -835,7 +819,7 @@ int spectrum_compute_release_mdls(THD *thd, bool transactional) {
     return 0;
   }
 
-  sql_print_information("spectrum_compute_release_mdls: transactional=%d", transactional);
+  sql_print_information("spectrum_compute_release_mdls[%d]: transactional=%d", thd->spectrum_thread_id, transactional);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -843,7 +827,7 @@ int spectrum_compute_release_mdls(THD *thd, bool transactional) {
 
   grpc::Status status = get_storage_client()->ReleaseMetadataLocks(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_release_mdls: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_compute_release_mdls[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
   return 0;
@@ -857,7 +841,7 @@ int spectrum_compute_post_ddl(THD *thd) {
     return 0;
   }
 
-  sql_print_information("spectrum_compute_post_ddl: satrt");
+  sql_print_information("spectrum_compute_post_ddl[%d]: satrt", thd->spectrum_thread_id);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -865,11 +849,9 @@ int spectrum_compute_post_ddl(THD *thd) {
   grpc::ClientContext context;
   grpc::Status status = get_storage_client()->PostDDL(&context, request, &response);
   if (!status.ok()) {
-    sql_print_error("spectrum_compute_post_ddl: error=%s", status.error_message().c_str());
+    sql_print_error("spectrum_compute_post_ddl[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
     assert(false);
   }
-
-  spectrum_log_post_ddl(thd);
 
   return 0;
 }

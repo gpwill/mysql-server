@@ -166,6 +166,27 @@ void find_and_close_table(
   close_thread_table(thd, table);
 }
 
+bool check_and_coalesce_trx_read_write(THD *thd, bool all) {
+  Transaction_ctx::enum_trx_scope trx_scope =
+          all ? Transaction_ctx::SESSION : Transaction_ctx::STMT;
+  auto ha_list = thd->get_transaction()->ha_trx_info(trx_scope);
+
+  for (auto const &ha_info : ha_list) {
+    if (!all) {
+      Ha_trx_info *ha_info_all =
+          &thd->get_ha_data(ha_info.ht()->slot)->ha_info[1];
+      assert(&ha_info != ha_info_all);
+      if (ha_info_all->is_started()) {
+        ha_info_all->coalesce_trx_with(ha_info);
+      }
+    }
+    if (ha_info.is_trx_read_write()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 int create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id) {
   HA_CREATE_INFO create_info;
   dd::Table *table_def = nullptr;
@@ -258,6 +279,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = create_thd(request->thread());
       create_table(thd, db_name, table_name, handler_id);
+
+      spectrum_log_create_table(thd, db_name, table_name, handler_id);
       return grpc::Status::OK; 
     }
 
@@ -269,12 +292,16 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = create_thd(request->thread());
       delete_table(thd, db_name, table_name, table_path);
+
+      spectrum_log_delete_table(thd, db_name, table_name, table_path);
       return grpc::Status::OK; 
     }
 
     ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
       THD *thd = create_thd(request->thread());
       post_ddl(thd);
+
+      spectrum_log_post_ddl(thd);
       return grpc::Status::OK; 
     }
 
@@ -488,6 +515,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       spectrum_print_row("WriteRowNew", table);
       spectrum_row_fill_fields(table, response->mutable_row());
 
+      spectrum_log_add_row(thd, table, table->record[0], nullptr);
       return grpc::Status::OK; 
     }
 
@@ -503,10 +531,9 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table->autoinc_field_has_explicit_non_null_value = request->autoinc_field_has_explicit_non_null_value();
 
       ::spectrum::Row spectrum_old_row = request->old_row();
-      spectrum_row_extract_fields(table, &spectrum_old_row);
-      store_record(table, record[1]);
+      spectrum_row_extract_fields(table, table->record[1], &spectrum_old_row);
       ::spectrum::Row spectrum_new_row = request->new_row();
-      spectrum_row_extract_fields(table, &spectrum_new_row);
+      spectrum_row_extract_fields(table, table->record[0], &spectrum_new_row);
       spectrum_print_row("UpdateRow", table);
 
       // For autoincr field to work
@@ -515,6 +542,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table->file->ha_update_row(table->record[1], table->record[0]);
       table->file->ha_release_auto_increment();
 
+      spectrum_log_add_row(thd, table, table->record[0], table->record[1]);
       return grpc::Status::OK; 
     }
 
@@ -534,24 +562,39 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       table->file->ha_delete_row(table->record[0]);
 
+      spectrum_log_add_row(thd, table, nullptr, table->record[0]);
       return grpc::Status::OK;
     }
 
     ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequest* request, ::spectrum::PrepareResponse* response) {
-      sql_print_information("Prepare: all=%d", request->all());
-
       THD *thd = create_thd(request->thread());
-      ha_prepare_low(thd, request->all());
+      bool all = request->all();
 
+      sql_print_information("Prepare[%d]: all=%d", thd->spectrum_thread_id, all);
+
+      if (check_and_coalesce_trx_read_write(thd, all)) {
+        spectrum_log_prepare(thd, all);
+      } else {
+        sql_print_information("Prepare[%d]: skip spectrum log prepare for readonly transaction", thd->spectrum_thread_id);
+      }
+
+      ha_prepare_low(thd, all);
       return grpc::Status::OK; 
     }
 
     ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
-      sql_print_information("Commit: all=%d", request->all());
-
       THD *thd = create_thd(request->thread());
+      bool all = request->all();
 
-      ha_commit_low(thd, request->all(), false);
+      sql_print_information("Commit[%d]: all=%d", thd->spectrum_thread_id, all);
+
+      if (check_and_coalesce_trx_read_write(thd, all)) {
+        spectrum_log_commit(thd, all);
+      } else {
+        sql_print_information("Commit[%d]: skip spectrum log commit for readonly transaction", thd->spectrum_thread_id);
+      }
+  
+      ha_commit_low(thd, all, false);
       return grpc::Status::OK; 
     }
 
@@ -590,6 +633,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = create_thd(request->thread());
       update_metadata(thd, table.c_str(), object_id, object_name.c_str());
+
+      spectrum_log_update_metadata(thd, table.c_str(), object_id, object_name.c_str());
       return grpc::Status::OK; 
     }
 

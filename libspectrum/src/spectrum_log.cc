@@ -61,8 +61,6 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql_table.h>
 #include <sql/handler.h>
 #include <sql/mysqld.h>
-#include <sql/dd/types/schema.h>
-#include <sql/dd/cache/dictionary_client.h>
 
 #include <current_thd.h>
 #include <debug_sync.h>
@@ -111,45 +109,45 @@ grpc::ClientReaderWriter<spectrum::ReplicateRequest, spectrum::ReplicateResponse
   return storage_replica_stream.get();
 }
 
-int spectrum_log_create_table(THD *thd, TABLE *table) {
+int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id) {
   spectrum::ReplicateRequest request;
   spectrum::ReplicateResponse response;
   
-  sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", table->s->db.str, table->s->table_name.str, table->file);
+  sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", db_name, table_name, handler_id);
 
   request.set_event_id(next_event_id());
 
   spectrum::CreateTableRequest *event = request.mutable_create_table_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  event->set_database(table->s->db.str);
-  event->set_table(table->s->table_name.str);
-  event->set_handler((uint64)table->file);
+  event->set_database(db_name);
+  event->set_table(table_name);
+  event->set_handler(handler_id);
 
   if (!get_storage_replica_stream()->Write(request)) {
     sql_print_error("spectrum_log_create_table[%s:%s:%d]: stream write error",
-        event->database().c_str(), event->table().c_str(), table->file);
+        event->database().c_str(), event->table().c_str(), handler_id);
   }
   return 0;
 }
 
-int spectrum_log_delete_table(THD *thd, const dd::Schema *schema_def, const dd::Table *table_def, const char* table_path) {
+int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path) {
   spectrum::ReplicateRequest request;
   spectrum::ReplicateResponse response;
 
-  sql_print_information("spectrum_log_delete_table[%s:%s]: table_path=%s", schema_def->name().c_str(), table_def->name().c_str(), table_path);
+  sql_print_information("spectrum_log_delete_table[%s:%s]: table_path=%s", db_name, table_name, table_path);
 
   request.set_event_id(next_event_id());
 
   spectrum::DeleteTableRequest *event = request.mutable_delete_table_event();
   spectrum::Thread *spectrum_thread = event->mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  event->set_database(schema_def->name().c_str());
-  event->set_table(table_def->name().c_str());
+  event->set_database(db_name);
+  event->set_table(table_name);
   event->set_table_path(table_path);
 
   if (!get_storage_replica_stream()->Write(request)) {
-    sql_print_error("spectrum_log_delete_table[%s:%s]: stream write error", schema_def->name().c_str(), table_def->name().c_str());
+    sql_print_error("spectrum_log_delete_table[%s:%s]: stream write error", db_name, table_name);
   }
   return 0;
 }
@@ -224,13 +222,7 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
   return 0;
 }
 
-int spectrum_log_prepare(THD *thd, handlerton *ht, bool all) {
-  Ha_trx_info *ha_trx_info = thd->get_ha_data(ht->slot)->ha_info + (all ? 1 : 0);
-  if (!ha_trx_info->is_trx_read_write()) {
-    sql_print_information("spectrum_log_prepare: skip for read only transaction");
-    return 0;
-  }
-
+int spectrum_log_prepare(THD *thd, bool all) {
   spectrum::ReplicateRequest request;
   spectrum::ReplicateResponse response;
 
@@ -262,13 +254,7 @@ int spectrum_log_prepare(THD *thd, handlerton *ht, bool all) {
   return 0;
 }
 
-int spectrum_log_commit(THD *thd, handlerton *ht, bool all) {
-  Ha_trx_info *ha_trx_info = thd->get_ha_data(ht->slot)->ha_info + (all ? 1 : 0);
-  if (!ha_trx_info->is_trx_read_write()) {
-    sql_print_information("spectrum_log_commit: skip for read only transaction");
-    return 0;
-  }
-
+int spectrum_log_commit(THD *thd, bool all) {
   spectrum::ReplicateRequest request;
   spectrum::ReplicateResponse response;
 
