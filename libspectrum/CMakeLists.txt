@@ -54,5 +54,10 @@ ADD_STATIC_LIBRARY(spectrum_log
 
 ADD_STATIC_LIBRARY(spectrum_compute
   ${SPECTRUM_BASE_SRC_DIR}/spectrum_compute.cc
+  LINK_LIBRARIES spectrum_pb spectrum_common
+)
+
+ADD_STATIC_LIBRARY(spectrum_storage
+  ${SPECTRUM_BASE_SRC_DIR}/spectrum_storage.cc
   LINK_LIBRARIES spectrum_pb spectrum_common spectrum_log
 )

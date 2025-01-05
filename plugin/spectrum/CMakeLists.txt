@@ -21,7 +21,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA
 
-OPTION(WITH_SPECTRUM_STORAGE "Build Spectrum Storage Plugin" ON)
+OPTION(WITH_SPECTRUM "Build Spectrum Plugin" ON)
 
 SET(SPECTRUM_PB_GENERATE_DIR ${CMAKE_BINARY_DIR}/libspectrum/generated/protobuf)
 
@@ -31,14 +31,14 @@ INCLUDE_DIRECTORIES(
   ${SPECTRUM_PB_GENERATE_DIR}
 )
 
-MYSQL_ADD_PLUGIN(spectrum_storage
-  spectrum_storage.cc
-  LINK_LIBRARIES spectrum_pb spectrum_common
+MYSQL_ADD_PLUGIN(spectrum
+  spectrum_plugin.cc
+  LINK_LIBRARIES spectrum_compute spectrum_storage
   DEFAULT
 )
   
 INSTALL(FILES
-  spectrum_storage.ini
+  spectrum_plugin.ini
   DESTINATION ${INSTALL_PLUGINDIR}
   COMPONENT Test
 )

@@ -16,25 +16,8 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
-#include <ctype.h>
-#include <fcntl.h>
-#include <mysql/plugin.h>
-#include <mysql_version.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-
-#include "m_string.h"  // strlen
-#include "my_dbug.h"
-#include "my_dir.h"
-#include "my_inttypes.h"
-#include "my_io.h"
-#include "my_psi_config.h"
-#include "my_sys.h"  // my_write, my_malloc
 #include "my_thread.h"
 #include "thr_lock.h"
-#include "mysql/psi/mysql_memory.h"
-#include "sql/sql_plugin.h"  // st_plugin_int
 #include "sql/sql_class.h"
 #include "sql/sql_base.h"
 #include "sql/sql_table.h"
@@ -869,88 +852,18 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
     }
 };
 
-struct spectrum_storage_plugin_context {
-  std::unique_ptr<grpc::Server> server;
-};
+std::unique_ptr<grpc::Server> spectrum_storage_server;
 
-PSI_memory_key key_memory_spectrum_storage_plugin_context;
+int spectrum_storage_init() {
+  grpc::ServerBuilder serverBuilder;
 
-/*
-  Initialize the daemon example at server start or plugin installation.
-  SYNOPSIS
-    daemon_example_plugin_init()
-  DESCRIPTION
-    Starts up heartbeatbeat thread
-  RETURN VALUE
-    0                    success
-    1                    failure (cannot happen)
-*/
+  serverBuilder.RegisterService(new StorageNodeImpl());
+  serverBuilder.RegisterService(new StorageReplicaNodeImpl());
 
-static int daemon_example_plugin_init(void *p) {
-  DBUG_TRACE;
-  struct spectrum_storage_plugin_context *con;
-  struct st_plugin_int *plugin = (struct st_plugin_int *)p;
+  node_config_t *node_config = find_current_node_config();
+  serverBuilder.AddListeningPort(node_config->address, grpc::InsecureServerCredentials());
 
-  con = (struct spectrum_storage_plugin_context *)my_malloc(
-      key_memory_spectrum_storage_plugin_context,
-      sizeof(struct spectrum_storage_plugin_context), MYF(0));
-  plugin->data = (void *)con;
-
-  spectrum_config_init();
-
-  if (is_spectrum_storage()) {
-    grpc::ServerBuilder serverBuilder;
-
-    grpc::Service *service = new StorageNodeImpl();
-    serverBuilder.RegisterService(service);
-
-    grpc::Service *replicaService = new StorageReplicaNodeImpl();
-    serverBuilder.RegisterService(replicaService);
-
-    node_config_t *node_config = find_current_node_config();
-    serverBuilder.AddListeningPort(node_config->address, grpc::InsecureServerCredentials());
-    con->server = serverBuilder.BuildAndStart();
-    sql_print_information("Spectrum storage server started at %s", node_config->address.c_str());
-  }
-
+  spectrum_storage_server = serverBuilder.BuildAndStart();
+  sql_print_information("Spectrum storage server started at %s", node_config->address.c_str());
   return 0;
 }
-
-/*
-  Terminate the daemon example at server shutdown or plugin deinstallation.
-  SYNOPSIS
-    daemon_example_plugin_deinit()
-    Does nothing.
-  RETURN VALUE
-    0                    success
-    1                    failure (cannot happen)
-*/
-
-static int daemon_example_plugin_deinit(void *p) {
-  DBUG_TRACE;
-
-  return 0;
-}
-
-struct st_mysql_daemon daemon_example_plugin = {MYSQL_DAEMON_INTERFACE_VERSION};
-
-/*
-  Plugin library descriptor
-*/
-
-mysql_declare_plugin(spectrum_storage){
-    MYSQL_DAEMON_PLUGIN,
-    &daemon_example_plugin,
-    "spectrum_storage",
-    PLUGIN_AUTHOR_ORACLE,
-    "Spectrum storage",
-    PLUGIN_LICENSE_GPL,
-    daemon_example_plugin_init,   /* Plugin Init */
-    nullptr,                      /* Plugin Check uninstall */
-    daemon_example_plugin_deinit, /* Plugin Deinit */
-    0x0100 /* 1.0 */,
-    nullptr, /* status variables                */
-    nullptr, /* system variables                */
-    nullptr, /* config options                  */
-    0,       /* flags                           */
-} mysql_declare_plugin_end;

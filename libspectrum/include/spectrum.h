@@ -74,6 +74,8 @@ extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket);
 extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
 extern int spectrum_compute_post_ddl(THD *thd);
 
+extern int spectrum_storage_init();
+
 extern int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id);
 extern int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path);
 extern int spectrum_log_post_ddl(THD *thd);
