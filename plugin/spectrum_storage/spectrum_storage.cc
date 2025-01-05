@@ -60,6 +60,7 @@
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
 #include "spectrum.grpc.pb.h"
+#include "spectrum_config.h"
 
 char thread_stack = 'a';
 
@@ -874,10 +875,6 @@ struct spectrum_storage_plugin_context {
 
 PSI_memory_key key_memory_spectrum_storage_plugin_context;
 
-static char* get_spectrum_storage_node_port() {
-  return getenv("SPECTRUM_STORAGE_NODE_PORT");
-}
-
 /*
   Initialize the daemon example at server start or plugin installation.
   SYNOPSIS
@@ -899,6 +896,8 @@ static int daemon_example_plugin_init(void *p) {
       sizeof(struct spectrum_storage_plugin_context), MYF(0));
   plugin->data = (void *)con;
 
+  spectrum_config_init();
+
   if (is_spectrum_storage()) {
     grpc::ServerBuilder serverBuilder;
 
@@ -908,12 +907,10 @@ static int daemon_example_plugin_init(void *p) {
     grpc::Service *replicaService = new StorageReplicaNodeImpl();
     serverBuilder.RegisterService(replicaService);
 
-    std::string server_address("0.0.0.0:");
-    server_address.append(get_spectrum_storage_node_port());
-    serverBuilder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-
+    node_config_t *node_config = find_current_node_config();
+    serverBuilder.AddListeningPort(node_config->address, grpc::InsecureServerCredentials());
     con->server = serverBuilder.BuildAndStart();
-    sql_print_information("Spectrum storage server started at %s", server_address.c_str());
+    sql_print_information("Spectrum storage server started at %s", node_config->address.c_str());
   }
 
   return 0;

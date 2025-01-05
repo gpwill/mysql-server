@@ -53,29 +53,24 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include <grpc/grpc.h>
 #include "spectrum.h"
+#include "spectrum_config.h"
 
 bool is_spectrum_compute() {
-  char* env = getenv("SPECTRUM_COMPUTE_NODE");
-  if (env != nullptr) {
-    return true;
-  }
-  return false;
+  node_config_t *node_config = find_current_node_config();
+  if (!node_config) return false;
+  return node_config->role == node_role_enum::COMPUTE;
 }
 
 bool is_spectrum_storage() {
-  char* env = getenv("SPECTRUM_STORAGE_NODE");
-  if (env != nullptr) {
-    return true;
-  }
-  return false;
+  node_config_t *node_config = find_current_node_config();
+  if (!node_config) return false;
+  return node_config->role == node_role_enum::STORAGE_PRIMARY || node_config->role == node_role_enum::STORAGE_REPLICA;
 }
 
 bool is_spectrum_storage_replica() {
-  char* env = getenv("SPECTRUM_STORAGE_REPLICA_NODE");
-  if (env != nullptr) {
-    return true;
-  }
-  return false;
+  node_config_t *node_config = find_current_node_config();
+  if (!node_config) return false;
+  return node_config->role == node_role_enum::STORAGE_REPLICA;
 }
 
 void disable_spectrum_compute(THD *thd) {

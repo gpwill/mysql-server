@@ -83,6 +83,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <grpc/grpc.h>
 #include <grpcpp/create_channel.h>
 #include "spectrum.h"
+#include "spectrum_config.h"
 #include "spectrum.grpc.pb.h"
 
 typedef uint64 event_id_t;
@@ -94,7 +95,8 @@ inline event_id_t next_event_id() {
 std::unique_ptr<spectrum::StorageReplicaNode::Stub> storage_replica_client;
 spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   if (!storage_replica_client) {
-    std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel("localhost:64001", grpc::InsecureChannelCredentials());
+    node_config_t* node_config = find_storage_replica_node_config();
+    std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel(node_config->address, grpc::InsecureChannelCredentials());
     storage_replica_client = spectrum::StorageReplicaNode::NewStub(channel);
   }
   return storage_replica_client.get();

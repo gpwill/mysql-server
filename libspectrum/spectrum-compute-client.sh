@@ -1,6 +1,0 @@
-MYSQL_SPECTRUM_COMPUTE_ID="${1:-0}"
-MYSQL_SPECTRUM_ROOT=/Users/gupeng/workplace/mysql-server/build/mysql-spectrum
-MYSQL_SPECTRUM_COMPUTE_PORT=$(expr 3306 + ${MYSQL_SPECTRUM_COMPUTE_ID})
-MYSQL_SPECTRUM_COMPUTE_SOCK=/tmp/mysql-spectrum-compute-${MYSQL_SPECTRUM_COMPUTE_ID}.sock
-
-${MYSQL_SPECTRUM_ROOT}/bin/mysql --port=${MYSQL_SPECTRUM_COMPUTE_PORT} --socket=${MYSQL_SPECTRUM_COMPUTE_SOCK} --user=root
