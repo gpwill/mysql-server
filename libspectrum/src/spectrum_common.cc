@@ -48,6 +48,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql/field.h>
 #include <sql/table.h>
 #include <sql/log.h>
+#include <sql/sql_base.h>
 
 #include <mysql/plugin.h>
 
@@ -187,4 +188,71 @@ void spectrum_row_extract_fields(TABLE *table, uchar* record, spectrum::Row *spe
 
   table->write_set = temp_write_set;
   repoint_field_to_record(table, record, table->record[0]);
+}
+
+TABLE *spectrum_open_table(
+    THD *thd,
+    const char *db_name,
+    const char *table_name,
+    uint64 handler_id,
+    thr_lock_type lock_type,
+    thr_locked_row_action lock_action)
+{
+  Open_table_context otc(thd, 0);
+
+  Table_ref *tables = new Table_ref(db_name, strlen(db_name), table_name, strlen(table_name),
+                  table_name, lock_type);
+  tables->set_lock({lock_type, lock_action});
+  if (!open_table(thd, tables, &otc)) {
+    TABLE *table = tables->table;
+    table->use_all_columns();
+    table->file->spectrum_handler_id = handler_id;
+    return table;
+  }
+  return nullptr;
+}
+
+TABLE *spectrum_find_or_open_table(
+    THD *thd,
+    const char *db_name,
+    const char *table_name,
+    uint64 handler_id,
+    thr_lock_type lock_type,
+    thr_locked_row_action lock_action)
+{
+  for (TABLE *t = thd->open_tables; t; t = t->next) {
+    if ((!handler_id || t->file->spectrum_handler_id == handler_id) &&
+        !strcmp(t->s->db.str, db_name) &&
+        !strcmp(t->s->table_name.str, table_name))
+      return t;
+  }
+  return spectrum_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
+}
+
+TABLE *spectrum_find_or_open_table(
+    THD *thd,
+    const char *db_name,
+    const char *table_name,
+    thr_lock_type lock_type,
+    thr_locked_row_action lock_action)
+{
+  return spectrum_find_or_open_table(thd, db_name, table_name, 0, lock_type, lock_action);
+}
+
+void spectrum_find_and_close_table(
+    THD *thd,
+    const char *db_name,
+    const char *table_name,
+    uint64 handler_id)
+{
+  TABLE **table;
+  for (table = &thd->open_tables; *table; table = &(*table)->next) {
+    if ((!handler_id || (*table)->file->spectrum_handler_id == handler_id) &&
+        !strcmp((*table)->s->db.str, db_name) &&
+        !strcmp((*table)->s->table_name.str, table_name))
+      break;
+  }
+  if (*table) {
+    close_thread_table(thd, table);
+  }
 }

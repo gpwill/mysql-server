@@ -53,6 +53,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <cstdint>
 #include <memory>
 
+#include <sql/sql_base.h>
 #include <sql/mdl.h>
 #include <sql/field.h>
 #include <sql/table.h>
@@ -61,6 +62,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql_table.h>
 #include <sql/handler.h>
 #include <sql/mysqld.h>
+#include <sql/protocol_classic.h>
 
 #include <current_thd.h>
 #include <debug_sync.h>
@@ -82,6 +84,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 
 #include <grpc/grpc.h>
 #include <grpcpp/create_channel.h>
+#include "google/protobuf/text_format.h"
 #include "spectrum.h"
 #include "spectrum_config.h"
 #include "spectrum.grpc.pb.h"
@@ -111,62 +114,130 @@ grpc::ClientReaderWriter<spectrum::ReplicateRequest, spectrum::ReplicateResponse
   return storage_replica_stream.get();
 }
 
-int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+TABLE *find_or_open_event_table(THD *thd) {
+  const char *db_name = "spectrum";
+  const char *table_name = "events";
+
+  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, thr_lock_type::TL_WRITE, thr_locked_row_action::THR_DEFAULT);
+  assert(table);
+
+  table->use_all_columns();
+  table->reginfo.lock_type = thr_lock_type::TL_WRITE;
+
+  MDL_key mdl_key;
+  mdl_key.mdl_key_init(MDL_key::enum_mdl_namespace::TABLE, db_name, table_name);
+
+  MDL_request mdl_request;
+  MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, enum_mdl_type::MDL_SHARED_WRITE, enum_mdl_duration::MDL_TRANSACTION);
+  thd->mdl_context.acquire_lock(&mdl_request, 10000);
+  return table;
+}
+
+int spectrum_log_build_event(my_xid xid, uint64 event_id, spectrum::event_type_enum event_type, ::google::protobuf::Message &event_body, spectrum::Event *event) {
+  event->set_xid(xid);
+  event->set_id(event_id);
+  event->set_type(event_type);
+
+  google::protobuf::TextFormat::Printer printer;
+  printer.SetSingleLineMode(true);
+  printer.PrintToString(event_body, event->mutable_body());
+  return 0;
+}
+
+int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
+  TABLE *event_table = find_or_open_event_table(thd);
   
-  sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", db_name, table_name, handler_id);
+  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
+  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
 
-  request.set_event_id(next_event_id());
+  spectrum_debug = true;
 
-  spectrum::CreateTableRequest *event = request.mutable_create_table_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-  event->set_database(db_name);
-  event->set_table(table_name);
-  event->set_handler(handler_id);
+  memset(event_table->record[0], 0, event_table->s->null_bytes);
+  event_table->field[0]->store(event->xid(), true);
+  event_table->field[1]->store(event->id(), true);
+  event_table->field[2]->store(event->body().data(), event->body().length(), event_table->field[2]->charset());
+  event_table->file->ha_write_row(event_table->record[0]);
+
+  mysql_unlock_some_tables(thd, &event_table, 1);
+  return 0;
+}
+
+int spectrum_log_replicate_event(THD* thd, spectrum::Event *event, bool wait_response) {
+  spectrum::ReplicateRequest request;
+  request.mutable_event()->CopyFrom(*event);
 
   if (!get_storage_replica_stream()->Write(request)) {
+    return HA_ERR_GENERIC;
+  }
+
+  spectrum::ReplicateResponse response;
+  if (wait_response) {
+    do {
+      if (!get_storage_replica_stream()->Read(&response)) {
+        sql_print_error("spectrum_log_prepare: stream read error");
+        return HA_ERR_GENERIC;
+      }
+    } while(event->id() != response.event_id());
+  }
+  return 0;
+}
+
+int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id) {
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
+
+  sql_print_information("spectrum_log_create_table[%s:%s:%d]: satrt", db_name, table_name, handler_id);
+
+  spectrum::CreateTableRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_database(db_name);
+  event_body.set_table(table_name);
+  event_body.set_handler(handler_id);
+
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::CREATE_TABLE, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (spectrum_log_replicate_event(thd, &event, false)) {
     sql_print_error("spectrum_log_create_table[%s:%s:%d]: stream write error",
-        event->database().c_str(), event->table().c_str(), handler_id);
+        event_body.database().c_str(), event_body.table().c_str(), handler_id);
   }
   return 0;
 }
 
 int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
 
   sql_print_information("spectrum_log_delete_table[%s:%s]: table_path=%s", db_name, table_name, table_path);
 
-  request.set_event_id(next_event_id());
+  spectrum::DeleteTableRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_database(db_name);
+  event_body.set_table(table_name);
+  event_body.set_table_path(table_path);
 
-  spectrum::DeleteTableRequest *event = request.mutable_delete_table_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-  event->set_database(db_name);
-  event->set_table(table_name);
-  event->set_table_path(table_path);
-
-  if (!get_storage_replica_stream()->Write(request)) {
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::DELETE_TABLE, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (spectrum_log_replicate_event(thd, &event, false)) {
     sql_print_error("spectrum_log_delete_table[%s:%s]: stream write error", db_name, table_name);
   }
   return 0;
 }
 
 int spectrum_log_post_ddl(THD *thd) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
 
   sql_print_information("spectrum_log_post_ddl: satrt");
 
-  request.set_event_id(next_event_id());
+  spectrum::PostDDLRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
 
-  spectrum::PostDDLRequest *event = request.mutable_post_ddl_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-
-  if (!get_storage_replica_stream()->Write(request)) {
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::POST_DDL, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (spectrum_log_replicate_event(thd, &event, false)) {
     sql_print_error("spectrum_log_post_ddl: stream write error");
     return HA_ERR_GENERIC;
   }
@@ -174,22 +245,22 @@ int spectrum_log_post_ddl(THD *thd) {
 }
 
 int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id object_id, const char* object_name) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
 
   sql_print_information("spectrum_log_update_metadata: table=%s, object_name=%s, object_id=%d",
       table, object_name, object_id);
 
-  request.set_event_id(next_event_id());
+  spectrum::UpdateMetadataRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_table(table);
+  event_body.set_object_id(object_id);
+  event_body.set_object_name(object_name);
 
-  spectrum::UpdateMetadataRequest *event = request.mutable_update_metadata_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-  event->set_table(table);
-  event->set_object_id(object_id);
-  event->set_object_name(object_name);
-
-  if (!get_storage_replica_stream()->Write(request)) {
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::UPDATE_METADATA, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (spectrum_log_replicate_event(thd, &event, false)) {
     sql_print_error("spectrum_log_update_metadata: stream write error");
     return HA_ERR_GENERIC;
   }
@@ -197,93 +268,70 @@ int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id obje
 }
 
 int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
 
-  spectrum_print_row("spectrum_log_replicate_row_new", table, new_row);
-  spectrum_print_row("spectrum_log_replicate_old_new", table, old_row);
+  spectrum_print_row("spectrum_log_add_row_new", table, new_row);
+  spectrum_print_row("spectrum_log_add_old_new", table, old_row);
 
-  request.set_event_id(next_event_id());
+  spectrum::ReplicateRowRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_database(table->s->db.str);
+  event_body.set_table(table->s->table_name.str);
+  event_body.set_handler((uint64)table->file);
+  event_body.set_lock_type(table->reginfo.lock_type);
+  event_body.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
+  if (new_row) spectrum_row_fill_fields(table, new_row, event_body.mutable_new_row());
+  if (old_row) spectrum_row_fill_fields(table, old_row, event_body.mutable_old_row());
 
-  spectrum::ReplicateRowRequest *event = request.mutable_replicate_row_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-  event->set_database(table->s->db.str);
-  event->set_table(table->s->table_name.str);
-  event->set_handler((uint64)table->file);
-  event->set_lock_type(table->reginfo.lock_type);
-  event->set_lock_action(table->pos_in_table_list->lock_descriptor().type);
-
-  if (new_row) spectrum_row_fill_fields(table, new_row, event->mutable_new_row());
-  if (old_row) spectrum_row_fill_fields(table, old_row, event->mutable_old_row());
-
-  if (!get_storage_replica_stream()->Write(request)) {
-    sql_print_error("spectrum_log_replicate_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::ADD_ROW, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (spectrum_log_replicate_event(thd, &event, false)) {
+    sql_print_error("spectrum_log_add_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
     return HA_ERR_GENERIC;
   }
   return 0;
 }
 
 int spectrum_log_prepare(THD *thd, bool all) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
 
   sql_print_information("spectrum_log_prepare: all=%d", all);
 
-  request.set_event_id(next_event_id());
+  spectrum::PrepareRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_all(all);
 
-  spectrum::PrepareRequest *event = request.mutable_prepare_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-  event->set_all(all);
-
-  if (!get_storage_replica_stream()->Write(request)) {
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::PREPARE, event_body, &event);
+  //spectrum_log_write_event(thd, &event);
+  bool wait_response = all || !thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
+  if (spectrum_log_replicate_event(thd, &event, wait_response)) {
     sql_print_error("spectrum_log_prepare: stream write error");
     return HA_ERR_GENERIC;
   }
-
-  // Do not wait for response for non-autocommit statement prepare
-  if (!all && thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN)) {
-    return 0;
-  }
-  
-  do {
-    if (!get_storage_replica_stream()->Read(&response)) {
-      sql_print_error("spectrum_log_prepare: stream read error");
-      return HA_ERR_GENERIC;
-    }
-  } while(response.event_id() != request.event_id());
   return 0;
 }
 
 int spectrum_log_commit(THD *thd, bool all) {
-  spectrum::ReplicateRequest request;
-  spectrum::ReplicateResponse response;
+  my_xid xid = thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+  event_id_t event_id = next_event_id();
 
   sql_print_information("spectrum_log_commit: all=%d", all);
 
-  request.set_event_id(next_event_id());
+  spectrum::CommitRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_all(all);
 
-  spectrum::CommitRequest *event = request.mutable_commit_event();
-  spectrum::Thread *spectrum_thread = event->mutable_thread();
-  spectrum_thread_fill(thd, spectrum_thread);
-  event->set_all(all);
-
-  if (!get_storage_replica_stream()->Write(request)) {
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::COMMIT, event_body, &event);
+  //spectrum_log_write_event(thd, &event);
+  bool wait_response = all || !thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
+  if (spectrum_log_replicate_event(thd, &event, wait_response)) {
     sql_print_error("spectrum_log_commit: stream write error");
     return HA_ERR_GENERIC;
   }
-
-  // Do not wait for response for non-autocommit statement commit
-  if (!all && thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN)) {
-    return 0;
-  }
-  
-  do {
-    if (!get_storage_replica_stream()->Read(&response)) {
-      sql_print_error("spectrum_log_commit: stream read error");
-      return HA_ERR_GENERIC;
-    }
-  } while(response.event_id() != request.event_id());
   return 0;
 }

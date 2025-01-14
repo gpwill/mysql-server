@@ -50,8 +50,8 @@ std::vector<node_config_t> nodes;
 int spectrum_config_init() {
   nodes.push_back({"compute-0", node_role_enum::COMPUTE, "localhost:3306"});
   nodes.push_back({"compute-1", node_role_enum::COMPUTE, "localhost:3307"});
-  nodes.push_back({"storage-0", node_role_enum::STORAGE_PRIMARY, "localhost:64000"});
-  nodes.push_back({"storage-1", node_role_enum::STORAGE_REPLICA, "localhost:64001"});
+  nodes.push_back({"storage-0", node_role_enum::STORAGE_REPLICA, "localhost:64000"});
+  nodes.push_back({"storage-1", node_role_enum::STORAGE_PRIMARY, "localhost:64001"});
   return 0;
 }
 

@@ -30,6 +30,20 @@
 
 #include "spectrum.grpc.pb.h"
 
+namespace spectrum {
+
+enum event_type_enum {
+   CREATE_TABLE,
+   DELETE_TABLE,
+   POST_DDL,
+   UPDATE_METADATA,
+   ADD_ROW,
+   PREPARE,
+   COMMIT
+};
+
+}
+
 extern bool spectrum_debug;
 
 extern bool is_spectrum_compute();
@@ -47,9 +61,13 @@ extern void spectrum_row_extract_fields(TABLE *table, ::spectrum::Row *spectrum_
 extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum::Row *spectrum_row);
 extern void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread);
 
+TABLE *spectrum_open_table(THD *thd, const char *db_name, const char *table_name, uint64 handler_id, thr_lock_type lock_type, thr_locked_row_action lock_action);
+TABLE *spectrum_find_or_open_table(THD *thd, const char *db_name, const char *table_name, uint64 handler_id, thr_lock_type lock_type, thr_locked_row_action lock_action);
+TABLE *spectrum_find_or_open_table(THD *thd, const char *db_name, const char *table_name, thr_lock_type lock_type, thr_locked_row_action lock_action);
+void spectrum_find_and_close_table(THD *thd, const char *db_name, const char *table_name,uint64 handler_id);
+
 template<typename T>
 int spectrum_compute_update_metadata(THD *thd, const T *object);
-
 extern int spectrum_compute_create_table(THD *thd, TABLE *table);
 extern int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const char* table_path);
 extern int spectrum_compute_lock_table(THD *thd, TABLE *table);
