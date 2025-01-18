@@ -18,6 +18,7 @@
 
 #include "my_thread.h"
 #include "thr_lock.h"
+#include "mysql/plugin.h"
 #include "sql/sql_class.h"
 #include "sql/sql_base.h"
 #include "sql/sql_table.h"
@@ -113,6 +114,27 @@ bool check_and_coalesce_trx_read_write(THD *thd, bool all) {
     }
   }
   return false;
+}
+
+int recover(THD *thd, bool all) {
+  mysql_mutex_lock(&LOCK_plugin);
+
+  const LEX_CSTRING innodb_plugin_name{STRING_WITH_LEN("InnoDB")};
+  st_plugin_int *innodb_plugin = plugin_find_by_type(innodb_plugin_name, MYSQL_STORAGE_ENGINE_PLUGIN);
+  handlerton *ht = plugin_data<handlerton *>(&innodb_plugin);
+
+  uint xid_list_len = 10;
+  XA_recover_txn *xid_list = new (std::nothrow) XA_recover_txn[xid_list_len];
+  int prepared_count = ht->recover(ht, xid_list, xid_list_len, thd->mem_root);
+  for (int i = 0; i < prepared_count; i++) {
+    my_xid xid = xid_list[i].id.get_my_xid();
+    sql_print_information("Prepared transaction: %d", xid);
+    spectrum::EventList events;
+    spectrum_log_read_events_by_xid(thd, xid, &events);
+  }
+
+  mysql_mutex_unlock(&LOCK_plugin);
+  return 0;
 }
 
 int create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id) {
@@ -815,6 +837,8 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 std::unique_ptr<grpc::Server> spectrum_storage_server;
 
 int spectrum_storage_init() {
+  spectrum_log_init();
+
   grpc::ServerBuilder serverBuilder;
 
   serverBuilder.RegisterService(new StorageNodeImpl());

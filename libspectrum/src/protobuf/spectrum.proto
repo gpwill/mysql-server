@@ -384,3 +384,17 @@ message Event {
   uint64 type = 3;
   string body = 4;
 }
+
+message EventList {
+  repeated Event event = 1;
+}
+
+message Commit {
+  uint64 id = 1;
+  uint64 xid = 2;
+  EventList events = 3;
+}
+
+message CommitList {
+  repeated Commit commit = 1;
+}

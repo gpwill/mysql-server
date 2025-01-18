@@ -53,6 +53,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <mysql/plugin.h>
 
 #include <grpc/grpc.h>
+#include <grpcpp/create_channel.h>
 #include "spectrum.h"
 #include "spectrum_config.h"
 
@@ -80,6 +81,16 @@ void disable_spectrum_compute(THD *thd) {
 
 void enable_spectrum_compute(THD *thd) {
   thd->spectrum_compute_disabled = false;
+}
+
+std::unique_ptr<spectrum::StorageNode::Stub> storage_primary_client;
+spectrum::StorageNode::Stub* get_storage_primary_client() {
+  if (!storage_primary_client) {
+    node_config_t* node_config = find_storage_primary_node_config();
+    std::shared_ptr<grpc::Channel> channel = grpc::CreateChannel(node_config->address, grpc::InsecureChannelCredentials());
+    storage_primary_client = spectrum::StorageNode::NewStub(channel);
+  }
+  return storage_primary_client.get();
 }
 
 void spectrum_thread_fill_system_variables(THD *thd, spectrum::Thread *spectrum_thread) {

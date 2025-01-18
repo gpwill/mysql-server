@@ -53,6 +53,8 @@ extern bool is_spectrum_storage_replica();
 extern void disable_spectrum_compute(THD *thd);
 extern void enable_spectrum_compute(THD *thd);
 
+extern spectrum::StorageNode::Stub* get_storage_primary_client();
+
 extern void spectrum_print_row(char* method, TABLE* table);
 extern void spectrum_print_row(char* method, TABLE* table, uchar* record);
 extern void spectrum_row_fill_fields(TABLE* table, ::spectrum::Row *spectrum_row);
@@ -94,6 +96,7 @@ extern int spectrum_compute_post_ddl(THD *thd);
 
 extern int spectrum_storage_init();
 
+extern int spectrum_log_init();
 extern int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id);
 extern int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path);
 extern int spectrum_log_post_ddl(THD *thd);
@@ -101,5 +104,7 @@ extern int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_
 extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
 extern int spectrum_log_prepare(THD *thd, bool all);
 extern int spectrum_log_commit(THD *thd, bool all);
+extern int spectrum_log_read_commit(THD *thd, uint64 start_id_exclusive, spectrum::Commit *commit);
+extern int spectrum_log_read_events_by_xid(THD *thd, uint64 xid, spectrum::EventList *events);
 
 #endif
