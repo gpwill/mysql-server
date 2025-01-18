@@ -31,7 +31,6 @@
 #include "spectrum.grpc.pb.h"
 
 namespace spectrum {
-
 enum event_type_enum {
    CREATE_TABLE,
    DELETE_TABLE,
@@ -41,27 +40,32 @@ enum event_type_enum {
    PREPARE,
    COMMIT
 };
-
 }
 
-namespace spectrum_storage {
+typedef uint64 event_id_t;
+typedef uint64 commit_id_t;
 
+namespace spectrum_storage {
 class THD_context {
   private:
+    THD *m_thd;
     query_id_t m_compute_query_id;
+    event_id_t m_event_id;
 
   public:
-    THD_context() : m_compute_query_id(0) {}
+    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0) {}
 
     query_id_t compute_query_id() {
       return m_compute_query_id;
     }
-   
+
     void set_compute_query_id(query_id_t compute_query_id) {
       m_compute_query_id = compute_query_id;
     }
-};
 
+    my_xid xid();
+    event_id_t next_event_id();
+};
 }
 
 extern bool spectrum_debug;
@@ -125,8 +129,10 @@ extern int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_
 extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
 extern int spectrum_log_prepare(THD *thd, bool all);
 extern int spectrum_log_commit(THD *thd, bool all);
+extern int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid);
 extern int spectrum_log_read_commit(THD *thd, uint64 start_id_exclusive, spectrum::Commit *commit);
-extern int spectrum_log_read_events_by_xid(THD *thd, uint64 xid, spectrum::EventList *events);
+extern int spectrum_log_write_event(THD *thd, spectrum::Event *event);
+extern int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *events);
 extern int spectrum_log_read_last_event(THD *thd, spectrum::Event *event);
 
 #endif

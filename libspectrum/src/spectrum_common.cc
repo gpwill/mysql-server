@@ -273,3 +273,15 @@ void spectrum_find_and_close_table(
     close_thread_table(thd, table);
   }
 }
+
+namespace spectrum_storage {
+
+my_xid THD_context::xid() {
+  return m_thd->get_transaction()->xid_state()->get_xid()->get_my_xid();
+}
+
+event_id_t THD_context::next_event_id() {
+  return m_event_id++;
+}
+
+}

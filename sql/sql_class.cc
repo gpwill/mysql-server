@@ -630,7 +630,7 @@ THD::THD(bool enable_plugins)
       main_lex(new LEX),
       lex(main_lex.get()),
       m_dd_client(new dd::cache::Dictionary_client(this)),
-      m_spectrum_storage_context(new spectrum_storage::THD_context()),
+      m_spectrum_storage_context(new spectrum_storage::THD_context(this)),
       m_query_string(NULL_CSTR),
       m_db(NULL_CSTR),
       rli_fake(nullptr),

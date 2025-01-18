@@ -694,61 +694,82 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
 class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Service {
   public:
-    int CreateTable(const ::spectrum::CreateTableRequest* request) {
-      THD *thd;
-      const char* db_name = request->database().c_str();
-      const char* table_name = request->table().c_str();
-      uint64 handler_id = request->handler();
+    int CreateTable(spectrum::Event &event) {
+      spectrum::CreateTableRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
-      thd = create_thd(request->thread());
+      THD *thd;
+      const char* db_name = request.database().c_str();
+      const char* table_name = request.table().c_str();
+      uint64 handler_id = request.handler();
+
+      thd = create_thd(request.thread());
       create_table(thd, db_name, table_name, handler_id);
       return 0;
     }
 
-    int DeleteTable(const ::spectrum::DeleteTableRequest* request) {
-      THD *thd;
-      const char* db_name = request->database().c_str();
-      const char* table_name = request->table().c_str();
-      const char* table_path = request->table_path().c_str();
+    int DeleteTable(spectrum::Event &event) {
+      spectrum::DeleteTableRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
-      thd = create_thd(request->thread());
+      THD *thd;
+      const char* db_name = request.database().c_str();
+      const char* table_name = request.table().c_str();
+      const char* table_path = request.table_path().c_str();
+
+      thd = create_thd(request.thread());
       delete_table(thd, db_name, table_name, table_path);
+
+      spectrum_log_write_event(thd, &event);
       return 0;
     }
 
-    int PostDDL(const ::spectrum::PostDDLRequest* request) {
-      THD *thd = create_thd(request->thread());
+    int PostDDL(spectrum::Event &event) {
+      spectrum::PostDDLRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
+
+      THD *thd = create_thd(request.thread());
       post_ddl(thd);
+
+      spectrum_log_write_event(thd, &event);
       return 0;
     }
 
-    int UpdateMetadata(const ::spectrum::UpdateMetadataRequest* request) {
+    int UpdateMetadata(spectrum::Event &event) {
+      spectrum::UpdateMetadataRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
+
       THD *thd;
-      const std::string& table = request->table();
-      const dd::Object_id object_id = request->object_id();
-      const std::string& object_name = request->object_name();
+      const std::string& table = request.table();
+      const dd::Object_id object_id = request.object_id();
+      const std::string& object_name = request.object_name();
 
-      thd = create_thd(request->thread());
+      thd = create_thd(request.thread());
       update_metadata(thd, table.c_str(), object_id, object_name.c_str());
+
+      spectrum_log_write_event(thd, &event);
       return 0;
     }
 
-    int ReplicateRow(const ::spectrum::ReplicateRowRequest* request) {
+    int ReplicateRow(spectrum::Event &event) {
+      spectrum::ReplicateRowRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
+
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = TL_WRITE;
-      thr_locked_row_action lock_action = (thr_locked_row_action)request->lock_action();
+      thr_locked_row_action lock_action = (thr_locked_row_action)request.lock_action();
       uchar key[MAX_KEY_LENGTH];
       int err;
 
-      thd = create_thd(request->thread());
-      table = spectrum_find_or_open_table(thd, request->database().c_str(), request->table().c_str(), request->handler(), lock_type, lock_action);
+      thd = create_thd(request.thread());
+      table = spectrum_find_or_open_table(thd, request.database().c_str(), request.table().c_str(), request.handler(), lock_type, lock_action);
       empty_record(table);
 
-      if (request->has_new_row()) {
-        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request->new_row());
+      if (request.has_new_row()) {
+        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.new_row());
       } else {
-        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request->old_row());
+        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.old_row());
       }
       key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
       
@@ -759,10 +780,10 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
       }
 
-      if (request->has_old_row()) {
+      if (request.has_old_row()) {
         table->file->ha_index_init(table->s->primary_key, false);
         table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT);
-        if (request->has_new_row()) {
+        if (request.has_new_row()) {
           spectrum_print_row("ReplicateRowOld", table, table->record[1]);
           spectrum_print_row("ReplicateRowUpdate", table, table->record[0]);
           err = table->file->ha_update_row(table->record[1], table->record[0]);
@@ -772,34 +793,46 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         }
         table->file->ha_index_end();
       } else {
-        assert(request->has_new_row());
+        assert(request.has_new_row());
         spectrum_print_row("ReplicateRowNew", table, table->record[0]);
         err = table->file->ha_write_row(table->record[0]);
       }
 
       if (err) {
-        sql_print_error("ReplicateRow[%s:%s:%d]: error=%d", request->database().c_str(), request->table().c_str(), request->handler(), err);
+        sql_print_error("ReplicateRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
       }
+
+      spectrum_log_write_event(thd, &event);
       return 0;
     }
 
-    int Prepare(const ::spectrum::PrepareRequest* request) {
-      sql_print_information("Prepare: all=%d", request->all());
+    int Prepare(spectrum::Event &event) {
+      spectrum::PrepareRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
-      THD *thd = create_thd(request->thread());
-      ha_prepare_low(thd, request->all());
+      sql_print_information("Prepare: all=%d", request.all());
+
+      THD *thd = create_thd(request.thread());
+
+      spectrum_log_write_event(thd, &event);
+      spectrum_log_write_commit(thd, request.commit_id(), event.xid());
+
+      ha_prepare_low(thd, request.all());
       return 0;
     }
 
-    int Commit(const ::spectrum::CommitRequest* request) {
-      sql_print_information("Commit: all=%d", request->all());
+    int Commit(spectrum::Event &event) {
+      spectrum::CommitRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
-      THD *thd = create_thd(request->thread());
+      sql_print_information("Commit: all=%d", request.all());
+
+      THD *thd = create_thd(request.thread());
 
       close_thread_tables(thd);
 
-      ha_commit_low(thd, request->all(), false);
-      if (request->all()) {
+      ha_commit_low(thd, request.all(), false);
+      if (request.all()) {
         thd->mdl_context.release_transactional_locks();
       }
       return 0;
@@ -812,35 +845,21 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
           spectrum::Event event = request.event();
           spectrum::event_type_enum event_type = (spectrum::event_type_enum)event.type();
           if (event_type == spectrum::event_type_enum::CREATE_TABLE) {
-            spectrum::CreateTableRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            CreateTable(&event_body);
+            CreateTable(event);
           } else if (event_type == spectrum::event_type_enum::DELETE_TABLE) {
-            spectrum::DeleteTableRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            DeleteTable(&event_body);
+            DeleteTable(event);
           } else if (event_type == spectrum::event_type_enum::POST_DDL) {
-            spectrum::PostDDLRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            PostDDL(&event_body);
+            PostDDL(event);
           } else if (event_type == spectrum::event_type_enum::UPDATE_METADATA) {
-            spectrum::UpdateMetadataRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            UpdateMetadata(&event_body);
+            UpdateMetadata(event);
           } else if (event_type == spectrum::event_type_enum::ADD_ROW) {
-            spectrum::ReplicateRowRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            ReplicateRow(&event_body);
+            ReplicateRow(event);
           } else if (event_type == spectrum::event_type_enum::PREPARE) {
-            spectrum::PrepareRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            Prepare(&event_body);
+            Prepare(event);
             response.set_event_id(event.id());
             stream->Write(response);
           } else if (event_type == spectrum::event_type_enum::COMMIT) {
-            spectrum::CommitRequest event_body;
-            google::protobuf::TextFormat::ParseFromString(event.body(), &event_body);
-            Commit(&event_body);
+            Commit(event);
             response.set_event_id(event.id());
             stream->Write(response);
           }

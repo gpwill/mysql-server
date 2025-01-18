@@ -34,8 +34,6 @@ service StorageNode {
 
   rpc Prepare(PrepareRequest) returns (PrepareResponse) {}
   rpc Commit(CommitRequest) returns (CommitResponse) {} 
-
-  rpc ReplicateRow(ReplicateRowRequest) returns (ReplicateRowResponse) {} 
 }
 
 service StorageReplicaNode {
@@ -328,6 +326,7 @@ message DeleteRowResponse {
 message PrepareRequest {
   Thread thread = 1;
   bool all = 2;
+  uint64 commit_id = 3;
 }
 
 message PrepareResponse {
@@ -336,6 +335,7 @@ message PrepareResponse {
 message CommitRequest {
   Thread thread = 1;
   bool all = 2;
+  uint64 commit_id = 3;
 }
 
 message CommitResponse {
