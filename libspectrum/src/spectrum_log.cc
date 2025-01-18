@@ -177,10 +177,6 @@ TABLE *find_or_open_commit_table(THD *thd) {
   return table;
 }
 
-int spectrum_log_init() {
-  mysql_mutex_init(replicate_event_lock_psi_key, &replicate_event_lock, MY_MUTEX_INIT_FAST);
-}
-
 int spectrum_log_build_event(my_xid xid, uint64 event_id, spectrum::event_type_enum event_type, ::google::protobuf::Message &event_body, spectrum::Event *event) {
   event->set_xid(xid);
   event->set_id(event_id);
@@ -269,6 +265,30 @@ int spectrum_log_read_events_by_xid(THD *thd, uint64 xid, spectrum::EventList *e
   return error;
 }
 
+int spectrum_log_read_last_event(THD *thd, spectrum::Event *event) {
+  int error = 0;
+  TABLE *event_table = find_or_open_event_table(thd);
+  
+  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
+  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+
+  event_table->file->ha_index_init(0, true);
+  error = event_table->file->ha_index_last(event_table->record[0]);
+  if(!error) {
+    spectrum_print_row("spectrum_log_read_last_event", event_table);
+    spectrum_log_build_event(event_table, event);
+  }
+  if (error == HA_ERR_END_OF_FILE || error == HA_ERR_KEY_NOT_FOUND) error = 0;
+  if (error) {
+    sql_print_error("spectrum_log_read_last_event: error=%d", error);
+    assert(false);
+  }
+  event_table->file->ha_index_end();
+
+  mysql_unlock_some_tables(thd, &event_table, 1);
+  return error;
+}
+
 int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_id_t end_id_inclusive, spectrum::CommitList *commits) {
   int error = 0;
   TABLE *commit_table = find_or_open_commit_table(thd);
@@ -301,6 +321,32 @@ int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_i
   if (error == HA_ERR_END_OF_FILE || error == HA_ERR_KEY_NOT_FOUND) error = 0;
   if (error) {
     sql_print_error("spectrum_log_read_commits: error=%d", error);
+    assert(false);
+  }
+  commit_table->file->ha_index_end();
+
+  mysql_unlock_some_tables(thd, &commit_table, 1);
+  return error;
+}
+
+int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit) {
+  int error = 0;
+  TABLE *commit_table = find_or_open_commit_table(thd);
+
+  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
+  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+
+  commit_table->file->ha_index_init(0, true);
+  error = commit_table->file->ha_index_last(commit_table->record[0]);
+  if(!error) {
+    spectrum_print_row("spectrum_log_read_last_commit", commit_table);
+    commit->set_id(commit_table->field[0]->val_int());
+    commit->set_xid(commit_table->field[1]->val_int());
+    spectrum_log_read_events_by_xid(thd, commit->xid(), commit->mutable_events());
+  }
+  if (error == HA_ERR_END_OF_FILE || error == HA_ERR_KEY_NOT_FOUND) error = 0;
+  if (error) {
+    sql_print_error("spectrum_log_read_last_commit: error=%d", error);
     assert(false);
   }
   commit_table->file->ha_index_end();
@@ -526,4 +572,13 @@ int spectrum_log_commit(THD *thd, bool all) {
     sql_print_error("spectrum_log_commit: stream write error");
   }
   return 0;
+}
+
+int spectrum_log_init(THD *thd) {
+  mysql_mutex_init(replicate_event_lock_psi_key, &replicate_event_lock, MY_MUTEX_INIT_FAST);
+
+  spectrum::Commit last_commit;
+  spectrum_log_read_last_commit(thd, &last_commit);
+  atomic_commit_id = last_commit.id();
+  sql_print_information("Initialized spectrum log commit_id to %d", atomic_commit_id.load());
 }

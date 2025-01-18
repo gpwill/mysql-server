@@ -20,8 +20,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "my_thread.h"
 #include "mysql/psi/mysql_memory.h"
 #include "sql/sql_plugin.h"  // st_plugin_int
+#include "sql/log.h"
 
 #include "spectrum.h"
 #include "spectrum_config.h"
@@ -44,7 +46,17 @@ static int spectrum_plugin_init(void *p) {
   spectrum_config_init();
 
   if (is_spectrum_storage()) {
-    spectrum_storage_init();
+    my_thread_attr_t storage_init_thread_attr;
+    my_thread_attr_init(&storage_init_thread_attr);
+    my_thread_attr_setdetachstate(&storage_init_thread_attr, MY_THREAD_CREATE_JOINABLE);
+
+    my_thread_handle storage_init_thread;
+    if (!my_thread_create(&storage_init_thread, &storage_init_thread_attr, spectrum_storage_init, (void *)nullptr)) {
+      void *retval;
+      my_thread_join(&storage_init_thread, &retval);
+    } else {
+      sql_print_error("Could not start spectrum storage init thread");
+    }
   }
   return 0;
 }

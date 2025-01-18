@@ -44,10 +44,31 @@ enum event_type_enum {
 
 }
 
+namespace spectrum_storage {
+
+class THD_context {
+  private:
+    query_id_t m_compute_query_id;
+
+  public:
+    THD_context() : m_compute_query_id(0) {}
+
+    query_id_t compute_query_id() {
+      return m_compute_query_id;
+    }
+   
+    void set_compute_query_id(query_id_t compute_query_id) {
+      m_compute_query_id = compute_query_id;
+    }
+};
+
+}
+
 extern bool spectrum_debug;
 
 extern bool is_spectrum_compute();
 extern bool is_spectrum_storage();
+extern bool is_spectrum_storage_primary();
 extern bool is_spectrum_storage_replica();
 
 extern void disable_spectrum_compute(THD *thd);
@@ -94,9 +115,9 @@ extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket);
 extern int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number);
 extern int spectrum_compute_post_ddl(THD *thd);
 
-extern int spectrum_storage_init();
+extern void* spectrum_storage_init(void *);
 
-extern int spectrum_log_init();
+extern int spectrum_log_init(THD *thd);
 extern int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id);
 extern int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path);
 extern int spectrum_log_post_ddl(THD *thd);
@@ -106,5 +127,6 @@ extern int spectrum_log_prepare(THD *thd, bool all);
 extern int spectrum_log_commit(THD *thd, bool all);
 extern int spectrum_log_read_commit(THD *thd, uint64 start_id_exclusive, spectrum::Commit *commit);
 extern int spectrum_log_read_events_by_xid(THD *thd, uint64 xid, spectrum::EventList *events);
+extern int spectrum_log_read_last_event(THD *thd, spectrum::Event *event);
 
 #endif

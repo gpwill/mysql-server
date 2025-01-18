@@ -69,6 +69,12 @@ bool is_spectrum_storage() {
   return node_config->role == node_role_enum::STORAGE_PRIMARY || node_config->role == node_role_enum::STORAGE_REPLICA;
 }
 
+bool is_spectrum_storage_primary() {
+  node_config_t *node_config = find_current_node_config();
+  if (!node_config) return false;
+  return node_config->role == node_role_enum::STORAGE_PRIMARY;
+}
+
 bool is_spectrum_storage_replica() {
   node_config_t *node_config = find_current_node_config();
   if (!node_config) return false;

@@ -138,6 +138,10 @@ struct timeval;
 struct User_level_lock;
 struct YYLTYPE;
 
+namespace spectrum_storage {
+class THD_context;
+}
+
 namespace dd {
 namespace cache {
 class Dictionary_client;
@@ -984,8 +988,16 @@ class THD : public MDL_context_owner,
     return m_dd_client.get();
   }
 
+  spectrum_storage::THD_context *spectrum_storage_context() const
+  {
+    return m_spectrum_storage_context.get();
+  }
+
  private:
   std::unique_ptr<dd::cache::Dictionary_client> m_dd_client;
+
+  std::unique_ptr<spectrum_storage::THD_context> m_spectrum_storage_context;
+
 
   /**
     The query associated with this statement.
@@ -2460,6 +2472,7 @@ class THD : public MDL_context_owner,
   my_thread_t real_id;
   uint64 spectrum_thread_id;
   bool spectrum_compute_disabled;
+
   /**
     This counter is 32 bit because of the client protocol.
 

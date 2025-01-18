@@ -49,6 +49,11 @@
 
 char thread_stack = 'a';
 
+std::atomic<query_id_t> storage_query_id{0};
+query_id_t next_storage_query_id() {
+  return ++storage_query_id;
+}
+
 class Find_thd_with_spectrum_thread_id : public Find_THD_Impl {
  public:
   explicit Find_thd_with_spectrum_thread_id(uint64 spectrum_thread_id)
@@ -89,8 +94,18 @@ THD *create_thd(const spectrum::Thread &spectrum_thread)
   thd->store_globals();
   thd->lex->sql_command = (enum_sql_command)spectrum_thread.sql_command();
   thd->tx_isolation = (enum_tx_isolation)spectrum_thread.tx_isolation();
-  thd->query_id = (query_id_t)spectrum_thread.query_id();
   thd->variables.option_bits = spectrum_thread.system_variables().option_bits();
+
+  spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
+  if (is_spectrum_storage_primary()) {
+    query_id_t compute_query_id = (query_id_t)spectrum_thread.query_id();
+    if (compute_query_id != thd_storage_context->compute_query_id()) {
+      thd->query_id = next_storage_query_id();
+      thd_storage_context->set_compute_query_id(compute_query_id);
+    }
+  } else {
+    thd->query_id = (query_id_t)spectrum_thread.query_id();
+  }
 
   return (thd);
 }
@@ -836,8 +851,29 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
 std::unique_ptr<grpc::Server> spectrum_storage_server;
 
-int spectrum_storage_init() {
-  spectrum_log_init();
+void* spectrum_storage_init(void *context) {
+  my_thread_init();
+
+  THD thd;
+  thd.set_new_thread_id();
+  thd.thread_stack = reinterpret_cast<char *>(&thd);
+  thd.get_protocol_classic()->init_net((Vio *)0);
+  thd.store_globals();
+  thd.lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+  thd.tx_isolation = enum_tx_isolation::ISO_READ_COMMITTED;
+
+  spectrum_log_init(&thd);
+
+  spectrum::Event event;
+  spectrum_log_read_last_event(&thd, &event);
+  storage_query_id = event.xid();
+  sql_print_information("Initialized spectrum storage query_id to %d", storage_query_id.load());
+
+  trans_commit_stmt(&thd, true);
+  trans_commit(&thd, true);
+  close_thread_tables(&thd);
+  thd.mdl_context.release_transactional_locks();
+  tdc_flush_unused_tables();
 
   grpc::ServerBuilder serverBuilder;
 
@@ -849,5 +885,5 @@ int spectrum_storage_init() {
 
   spectrum_storage_server = serverBuilder.BuildAndStart();
   sql_print_information("Spectrum storage server started at %s", node_config->address.c_str());
-  return 0;
+  return nullptr;
 }
