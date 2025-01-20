@@ -681,7 +681,6 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       sql_print_information("ReleaseMetadataLocks: transactional=%d", transactional);
 
       thd = create_thd(request->thread());
-
       if (transactional) {
         thd->mdl_context.release_transactional_locks();
       } else {
@@ -693,7 +692,17 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 };
 
 class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Service {
+  private:
+    std::atomic<uint64> active_stream_id;
+    mysql_mutex_t replication_lock;
+    PSI_mutex_key replication_lock_psi_key;
+
   public:
+    StorageReplicaNodeImpl() {
+      active_stream_id = 0;
+      mysql_mutex_init(replication_lock_psi_key, &replication_lock, MY_MUTEX_INIT_FAST);
+    }
+
     int CreateTable(spectrum::Event &event) {
       spectrum::CreateTableRequest request;
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
@@ -838,10 +847,29 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       return 0;
     }
 
+    ::grpc::Status InitReplicationStream(::grpc::ServerContext* context, const ::spectrum::InitReplicationStreamRequest* request, ::spectrum::InitReplicationStreamResponse* response) {
+      mysql_mutex_lock(&replication_lock);
+
+      active_stream_id++;
+      sql_print_information("InitReplicationStream: active_stream_id=%d", active_stream_id.load());
+
+      response->set_stream_id(active_stream_id);
+      response->set_last_replicated_commit_id(spectrum_log_max_commit_id());
+
+      mysql_mutex_unlock(&replication_lock);
+      return grpc::Status::OK;
+    }
+
     grpc::Status Replicate(grpc::ServerContext* context, grpc::ServerReaderWriter<spectrum::ReplicateResponse, spectrum::ReplicateRequest>* stream) override {
         spectrum::ReplicateRequest request;
         spectrum::ReplicateResponse response;
         while (stream->Read(&request)) {
+          mysql_mutex_lock(&replication_lock);
+
+          if (request.stream_id() != active_stream_id.load()) {
+            return grpc::Status::CANCELLED;
+          }
+
           spectrum::Event event = request.event();
           spectrum::event_type_enum event_type = (spectrum::event_type_enum)event.type();
           if (event_type == spectrum::event_type_enum::CREATE_TABLE) {
@@ -863,6 +891,8 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
             response.set_event_id(event.id());
             stream->Write(response);
           }
+
+          mysql_mutex_unlock(&replication_lock);
         }
         return grpc::Status::OK;
     }

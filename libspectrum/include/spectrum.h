@@ -122,6 +122,7 @@ extern int spectrum_compute_post_ddl(THD *thd);
 extern void* spectrum_storage_init(void *);
 
 extern int spectrum_log_init(THD *thd);
+extern commit_id_t spectrum_log_max_commit_id();
 extern int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id);
 extern int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path);
 extern int spectrum_log_post_ddl(THD *thd);

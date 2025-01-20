@@ -90,13 +90,21 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "spectrum_config.h"
 #include "spectrum.grpc.pb.h"
 
-std::atomic<commit_id_t> atomic_commit_id;
+std::shared_mutex prepare_mutex;
+
+mysql_mutex_t max_commit_id_lock;
+PSI_mutex_key max_commit_id_lock_psi_key;
+std::atomic<commit_id_t> max_commit_id;
 inline event_id_t next_commit_id() {
-  return ++atomic_commit_id;
+  return ++max_commit_id;
 }
 
-inline event_id_t current_commit_id() {
-  return atomic_commit_id;
+inline event_id_t update_max_commit_id(commit_id_t commit_id) {
+  mysql_mutex_lock(&max_commit_id_lock);
+  if (commit_id > max_commit_id) {
+    max_commit_id = commit_id;
+  }
+  mysql_mutex_unlock(&max_commit_id_lock);
 }
 
 std::unique_ptr<spectrum::StorageReplicaNode::Stub> storage_replica_client;
@@ -108,9 +116,6 @@ spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   }
   return storage_replica_client.get();
 }
-
-mysql_mutex_t replication_lock;
-PSI_mutex_key replication_lock_psi_key;
 
 TABLE *find_or_open_event_table(THD *thd) {
   const char *db_name = "spectrum";
@@ -202,6 +207,8 @@ int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
   commit_table->file->ha_write_row(commit_table->record[0]);
 
   mysql_unlock_some_tables(thd, &commit_table, 1);
+
+  update_max_commit_id(commit_id);
   return 0;
 }
 
@@ -328,12 +335,14 @@ int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit) {
   return error;
 }
 
-std::shared_mutex replication_stream_init_mutex;
-
 class ReplicationStream {
   private:
     bool m_broken;
+    uint64 m_stream_id;
     std::unique_ptr<grpc::ClientReaderWriter<spectrum::ReplicateRequest, spectrum::ReplicateResponse>> m_stream;
+
+    mysql_mutex_t replication_lock;
+    PSI_mutex_key replication_lock_psi_key;
 
     int write_nolock(spectrum::Event *event, bool wait_response) {
       int error = 0;
@@ -342,16 +351,15 @@ class ReplicationStream {
 
       if (m_broken) return HA_ERR_GENERIC;
 
+      request.set_stream_id(m_stream_id);
       request.mutable_event()->CopyFrom(*event);
       if (!m_stream->Write(request)) {
-        sql_print_error("stream write error");
         error = HA_ERR_GENERIC;
         goto end;
       }
       if (wait_response) {
         do {
           if (!m_stream->Read(&response)) {
-            sql_print_error("stream read error");
             error = HA_ERR_GENERIC;
             goto end;
           }
@@ -366,9 +374,9 @@ class ReplicationStream {
   public:
     ReplicationStream() {
       m_broken = false; 
+      m_stream_id = 0;
 
-      grpc::ClientContext *stream_context = new grpc::ClientContext();
-      m_stream = get_storage_replica_client()->Replicate(stream_context);
+      mysql_mutex_init(replication_lock_psi_key, &replication_lock, MY_MUTEX_INIT_FAST);
     }
 
     ~ReplicationStream() {
@@ -381,16 +389,31 @@ class ReplicationStream {
 
     int init(THD *thd) {
       int error = 0;
-
+      commit_id_t last_replicated_commit_id;
       commit_id_t max_commit_id;
+      spectrum::CommitList commits;
+
+      spectrum::InitReplicationStreamRequest request;
+      spectrum::InitReplicationStreamResponse response;
+      grpc::ClientContext context;
+      grpc::Status status = get_storage_replica_client()->InitReplicationStream(&context, request, &response);
+      if (!status.ok()) {
+        sql_print_error("Failed to init replication stream");
+        error = HA_ERR_GENERIC;
+        goto end_nolock;
+      }
+      m_stream_id = response.stream_id();
+      last_replicated_commit_id = response.last_replicated_commit_id();
+      sql_print_information("ReplicationStream::Init: stream_id=%d, last_replicated_commit_id=%d", m_stream_id, last_replicated_commit_id);
+
       {
-        std::lock_guard<std::shared_mutex> stream_init_exclusive_lock(replication_stream_init_mutex);
-        max_commit_id = current_commit_id();
+        std::lock_guard<std::shared_mutex> prepare_exclusive_lock(prepare_mutex);
+        max_commit_id = spectrum_log_max_commit_id();
         mysql_mutex_lock(&replication_lock);
       }
-  
-      spectrum::CommitList commits;
-      spectrum_log_read_commits(thd, 0, max_commit_id, &commits);
+
+      m_stream = get_storage_replica_client()->Replicate(new grpc::ClientContext());
+      spectrum_log_read_commits(thd, last_replicated_commit_id, max_commit_id, &commits);
       for (int c = 0; c < commits.commit_size(); c++) {
         spectrum::Commit commit = commits.commit(c);
         spectrum::EventList events = commit.events();
@@ -413,6 +436,8 @@ class ReplicationStream {
 
     end:
       mysql_mutex_unlock(&replication_lock);
+    end_nolock:
+      if (error) m_broken = true;
       return error;
     }
 
@@ -556,9 +581,10 @@ int spectrum_log_prepare(THD *thd, bool all) {
 
   sql_print_information("spectrum_log_prepare: all=%d", all);
 
-  // Replication stream needs to be intialized before replication_stream_init_shared_lock to avoid deadlock
+  // Replication stream needs to be intialized before prepare_shared_lock to avoid deadlock
+  // with replication_lock
   ReplicationStream *replication_stream = get_replication_stream(thd);
-  std::shared_lock<std::shared_mutex> replication_stream_init_shared_lock(replication_stream_init_mutex);
+  std::shared_lock<std::shared_mutex> prepare_shared_lock(prepare_mutex);
 
   commit_id_t commit_id = next_commit_id();
   spectrum_log_write_commit(thd, commit_id, xid);
@@ -598,10 +624,14 @@ int spectrum_log_commit(THD *thd, bool all) {
 }
 
 int spectrum_log_init(THD *thd) {
-  mysql_mutex_init(replication_lock_psi_key, &replication_lock, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(max_commit_id_lock_psi_key, &max_commit_id_lock, MY_MUTEX_INIT_FAST);
 
   spectrum::Commit last_commit;
   spectrum_log_read_last_commit(thd, &last_commit);
-  atomic_commit_id = last_commit.id();
-  sql_print_information("Initialized spectrum log commit_id to %d", atomic_commit_id.load());
+  max_commit_id = last_commit.id();
+  sql_print_information("Initialized spectrum log max_commit_id to %d", max_commit_id.load());
+}
+
+commit_id_t spectrum_log_max_commit_id() {
+  return max_commit_id;
 }

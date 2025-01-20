@@ -37,6 +37,7 @@ service StorageNode {
 }
 
 service StorageReplicaNode {
+  rpc InitReplicationStream(InitReplicationStreamRequest) returns (InitReplicationStreamResponse) {}
   rpc Replicate (stream ReplicateRequest) returns (stream ReplicateResponse);
 }
 
@@ -371,11 +372,21 @@ message ReplicateRowResponse {
 }
 
 message ReplicateRequest {
-  Event event = 1;
+  uint64 stream_id = 1;
+  Event event = 2;
 }
 
 message ReplicateResponse {
   uint64 event_id = 1;
+}
+
+message InitReplicationStreamRequest {
+
+}
+
+message InitReplicationStreamResponse {
+  uint64 stream_id = 1;
+  uint64 last_replicated_commit_id = 2;
 }
 
 message Event {
