@@ -51,9 +51,10 @@ class THD_context {
     THD *m_thd;
     query_id_t m_compute_query_id;
     event_id_t m_event_id;
+    commit_id_t m_commit_id;
 
   public:
-    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0) {}
+    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0) {}
 
     query_id_t compute_query_id() {
       return m_compute_query_id;
@@ -61,6 +62,18 @@ class THD_context {
 
     void set_compute_query_id(query_id_t compute_query_id) {
       m_compute_query_id = compute_query_id;
+    }
+
+    commit_id_t commit_id() {
+      return m_commit_id;
+    }
+
+    void set_commit_id(commit_id_t commit_id) {
+      m_commit_id = commit_id;
+    }
+
+    void clear_commit_id() {
+      m_commit_id = 0;
     }
 
     my_xid xid();

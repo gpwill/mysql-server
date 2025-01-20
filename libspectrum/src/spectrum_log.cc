@@ -60,6 +60,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <sql/table.h>
 #include <sql/log.h>
 #include <sql/sql_class.h>
+#include <sql/sql_lex.h>
 #include <sql_table.h>
 #include <sql/handler.h>
 #include <sql/mysqld.h>
@@ -91,12 +92,18 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "spectrum.grpc.pb.h"
 
 std::shared_mutex prepare_mutex;
+std::shared_mutex commit_mutex;
+
+std::set<commit_id_t> prepared_commit_ids;
 
 mysql_mutex_t max_commit_id_lock;
 PSI_mutex_key max_commit_id_lock_psi_key;
 std::atomic<commit_id_t> max_commit_id;
 inline event_id_t next_commit_id() {
-  return ++max_commit_id;
+  mysql_mutex_lock(&max_commit_id_lock);
+  ++max_commit_id;
+  mysql_mutex_unlock(&max_commit_id_lock);
+  return max_commit_id;
 }
 
 inline event_id_t update_max_commit_id(commit_id_t commit_id) {
@@ -117,15 +124,15 @@ spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   return storage_replica_client.get();
 }
 
-TABLE *find_or_open_event_table(THD *thd) {
+TABLE *find_or_open_event_table(THD *thd, thr_lock_type lock_type) {
   const char *db_name = "spectrum";
   const char *table_name = "events";
 
-  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, thr_lock_type::TL_WRITE, thr_locked_row_action::THR_DEFAULT);
+  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, lock_type, thr_locked_row_action::THR_DEFAULT);
   assert(table);
 
   table->use_all_columns();
-  table->reginfo.lock_type = thr_lock_type::TL_WRITE;
+  table->reginfo.lock_type = lock_type;
 
   MDL_key mdl_key;
   mdl_key.mdl_key_init(MDL_key::enum_mdl_namespace::TABLE, db_name, table_name);
@@ -136,15 +143,15 @@ TABLE *find_or_open_event_table(THD *thd) {
   return table;
 }
 
-TABLE *find_or_open_commit_table(THD *thd) {
+TABLE *find_or_open_commit_table(THD *thd, thr_lock_type lock_type) {
   const char *db_name = "spectrum";
   const char *table_name = "commits";
 
-  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, thr_lock_type::TL_WRITE, thr_locked_row_action::THR_DEFAULT);
+  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, lock_type, thr_locked_row_action::THR_DEFAULT);
   assert(table);
 
   table->use_all_columns();
-  table->reginfo.lock_type = thr_lock_type::TL_WRITE;
+  table->reginfo.lock_type = lock_type;
 
   MDL_key mdl_key;
   mdl_key.mdl_key_init(MDL_key::enum_mdl_namespace::TABLE, db_name, table_name);
@@ -179,7 +186,7 @@ int spectrum_log_build_event(TABLE *event_table, spectrum::Event *event) {
 }
 
 int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
-  TABLE *event_table = find_or_open_event_table(thd);
+  TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_WRITE);
   
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
   thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
@@ -196,7 +203,7 @@ int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
 }
 
 int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
-  TABLE *commit_table = find_or_open_commit_table(thd);
+  TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_WRITE);
   
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
   thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
@@ -214,7 +221,7 @@ int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
 
 int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *events) {
   int error = 0;
-  TABLE *event_table = find_or_open_event_table(thd);
+  TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_READ);
   
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
   thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
@@ -247,8 +254,8 @@ int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *e
 
 int spectrum_log_read_last_event(THD *thd, spectrum::Event *event) {
   int error = 0;
-  TABLE *event_table = find_or_open_event_table(thd);
-  
+  TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_READ);
+
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
   thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
 
@@ -271,7 +278,7 @@ int spectrum_log_read_last_event(THD *thd, spectrum::Event *event) {
 
 int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_id_t end_id_inclusive, spectrum::CommitList *commits) {
   int error = 0;
-  TABLE *commit_table = find_or_open_commit_table(thd);
+  TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_READ);
   
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
   thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
@@ -311,7 +318,7 @@ int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_i
 
 int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit) {
   int error = 0;
-  TABLE *commit_table = find_or_open_commit_table(thd);
+  TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_READ);
 
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
   thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
@@ -392,6 +399,7 @@ class ReplicationStream {
       commit_id_t last_replicated_commit_id;
       commit_id_t max_commit_id;
       spectrum::CommitList commits;
+      std::set<commit_id_t> prepared_commit_ids_copy;
 
       spectrum::InitReplicationStreamRequest request;
       spectrum::InitReplicationStreamResponse response;
@@ -408,12 +416,22 @@ class ReplicationStream {
 
       {
         std::lock_guard<std::shared_mutex> prepare_exclusive_lock(prepare_mutex);
+        std::lock_guard<std::shared_mutex> commit_exclusive_lock(commit_mutex);
+
         max_commit_id = spectrum_log_max_commit_id();
+        prepared_commit_ids_copy = prepared_commit_ids;
+
         mysql_mutex_lock(&replication_lock);
       }
 
       m_stream = get_storage_replica_client()->Replicate(new grpc::ClientContext());
+
+      thd->begin_attachable_ro_transaction();
+      thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+      thd->tx_isolation = enum_tx_isolation::ISO_READ_UNCOMMITTED;
       spectrum_log_read_commits(thd, last_replicated_commit_id, max_commit_id, &commits);
+      thd->end_attachable_transaction();
+
       for (int c = 0; c < commits.commit_size(); c++) {
         spectrum::Commit commit = commits.commit(c);
         spectrum::EventList events = commit.events();
@@ -423,8 +441,8 @@ class ReplicationStream {
             error = HA_ERR_GENERIC;
             goto end;
           }
-
-          if (event.type() == spectrum::event_type_enum::PREPARE) {
+          if (event.type() == spectrum::event_type_enum::PREPARE &&
+              prepared_commit_ids_copy.find(commit.id()) == prepared_commit_ids_copy.end()) {
             event.set_type(spectrum::event_type_enum::COMMIT);
             if (write_nolock(&event, false)) {
               error = HA_ERR_GENERIC;
@@ -589,6 +607,9 @@ int spectrum_log_prepare(THD *thd, bool all) {
   commit_id_t commit_id = next_commit_id();
   spectrum_log_write_commit(thd, commit_id, xid);
 
+  prepared_commit_ids.insert(commit_id);
+  storage_thd_context->set_commit_id(commit_id);
+
   spectrum::PrepareRequest event_body;
   spectrum_thread_fill(thd, event_body.mutable_thread());
   event_body.set_all(all);
@@ -608,8 +629,14 @@ int spectrum_log_commit(THD *thd, bool all) {
   spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
+  commit_id_t commit_id = storage_thd_context->commit_id();
 
   sql_print_information("spectrum_log_commit: all=%d", all);
+
+  std::shared_lock<std::shared_mutex> commit_shared_lock(commit_mutex);
+
+  prepared_commit_ids.erase(commit_id);
+  storage_thd_context->clear_commit_id();
 
   spectrum::CommitRequest event_body;
   spectrum_thread_fill(thd, event_body.mutable_thread());
