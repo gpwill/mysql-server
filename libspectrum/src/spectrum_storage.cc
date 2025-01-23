@@ -49,11 +49,6 @@
 
 char thread_stack = 'a';
 
-std::atomic<query_id_t> storage_query_id{0};
-query_id_t next_storage_query_id() {
-  return ++storage_query_id;
-}
-
 class Find_thd_with_spectrum_thread_id : public Find_THD_Impl {
  public:
   explicit Find_thd_with_spectrum_thread_id(uint64 spectrum_thread_id)
@@ -100,7 +95,7 @@ THD *create_thd(const spectrum::Thread &spectrum_thread)
   if (is_spectrum_storage_primary()) {
     query_id_t compute_query_id = (query_id_t)spectrum_thread.query_id();
     if (compute_query_id != thd_storage_context->compute_query_id()) {
-      thd->query_id = next_storage_query_id();
+      thd->query_id = next_xid();
       thd_storage_context->set_compute_query_id(compute_query_id);
     }
   } else {
@@ -144,8 +139,6 @@ int recover(THD *thd, bool all) {
   for (int i = 0; i < prepared_count; i++) {
     my_xid xid = xid_list[i].id.get_my_xid();
     sql_print_information("Prepared transaction: %d", xid);
-    spectrum::EventList events;
-    spectrum_log_read_events_by_xid(thd, xid, &events);
   }
 
   mysql_mutex_unlock(&LOCK_plugin);
@@ -243,6 +236,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       thd = create_thd(request->thread());
       create_table(thd, db_name, table_name, handler_id);
 
+      spectrum_log_open(thd);
       spectrum_log_create_table(thd, db_name, table_name, handler_id);
       return grpc::Status::OK; 
     }
@@ -256,6 +250,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       thd = create_thd(request->thread());
       delete_table(thd, db_name, table_name, table_path);
 
+      spectrum_log_open(thd);
       spectrum_log_delete_table(thd, db_name, table_name, table_path);
       return grpc::Status::OK; 
     }
@@ -266,8 +261,10 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       // Auto commit the events for post_ddl
       thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
+      spectrum_log_open(thd);
       spectrum_log_post_ddl(thd);
       ha_commit_low(thd, false, false);
+      spectrum_log_close(thd);
       trn_ctx->cleanup();
       thd->tx_priority = 0;
 
@@ -485,6 +482,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       spectrum_print_row("WriteRowNew", table);
       spectrum_row_fill_fields(table, response->mutable_row());
 
+      spectrum_log_open(thd);
       spectrum_log_add_row(thd, table, table->record[0], nullptr);
       return grpc::Status::OK; 
     }
@@ -512,6 +510,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table->file->ha_update_row(table->record[1], table->record[0]);
       table->file->ha_release_auto_increment();
 
+      spectrum_log_open(thd);
       spectrum_log_add_row(thd, table, table->record[0], table->record[1]);
       return grpc::Status::OK; 
     }
@@ -532,6 +531,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       table->file->ha_delete_row(table->record[0]);
 
+      spectrum_log_open(thd);
       spectrum_log_add_row(thd, table, nullptr, table->record[0]);
       return grpc::Status::OK;
     }
@@ -545,6 +545,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       sql_print_information("Prepare[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
       if (check_and_coalesce_trx_read_write(thd, all)) {
+        spectrum_log_open(thd);
         spectrum_log_prepare(thd, all, real_trans);
         // If we are committing the whole transaction, the written commit events
         // in spectrum log need to be committed as a separate statement transaction belonging
@@ -573,12 +574,15 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       sql_print_information("Commit[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
       if (check_and_coalesce_trx_read_write(thd, all)) {
+        spectrum_log_open(thd);
         spectrum_log_commit(thd, all, real_trans);
       } else {
         sql_print_information("Commit[%d]: skip spectrum log commit for readonly transaction", thd->spectrum_thread_id);
       }
   
       ha_commit_low(thd, all, false);
+
+      spectrum_log_close(thd);
       
       if (real_trans) {
         trn_ctx->cleanup();
@@ -623,6 +627,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       thd = create_thd(request->thread());
       update_metadata(thd, table.c_str(), object_id, object_name.c_str());
 
+      spectrum_log_open(thd);
       spectrum_log_update_metadata(thd, table.c_str(), object_id, object_name.c_str());
       return grpc::Status::OK; 
     }
@@ -731,6 +736,9 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       thd = create_thd(request.thread());
       create_table(thd, db_name, table_name, handler_id);
+
+      spectrum_log_open(thd);
+      spectrum_log_write_event(thd, &event);
       return 0;
     }
 
@@ -746,6 +754,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       thd = create_thd(request.thread());
       delete_table(thd, db_name, table_name, table_path);
 
+      spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
       return 0;
     }
@@ -759,7 +768,9 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       // Auto commit the events for post_ddl
       thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
+      spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
+      spectrum_log_close(thd);
       trn_ctx->cleanup();
       thd->tx_priority = 0;
 
@@ -779,6 +790,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       thd = create_thd(request.thread());
       update_metadata(thd, table.c_str(), object_id, object_name.c_str());
 
+      spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
       return 0;
     }
@@ -834,6 +846,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         sql_print_error("ReplicateRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
       }
 
+      spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
       return 0;
     }
@@ -849,6 +862,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       sql_print_information("Prepare: all=%d, commit_id=%d", all, commit_id);
 
+      spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
 
       // 0 commit_id means it's an non-autocommit statement transaction, not the real transaction,
@@ -881,6 +895,9 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       close_thread_tables(thd);
 
       ha_commit_low(thd, all, false);
+
+      spectrum_log_close(thd);
+
       if (all) {
         thd->mdl_context.release_transactional_locks();
       }
@@ -948,15 +965,8 @@ void* spectrum_storage_init(void *context) {
   thd.thread_stack = reinterpret_cast<char *>(&thd);
   thd.get_protocol_classic()->init_net((Vio *)0);
   thd.store_globals();
-  thd.lex->sql_command = enum_sql_command::SQLCOM_SELECT;
-  thd.tx_isolation = enum_tx_isolation::ISO_READ_COMMITTED;
 
   spectrum_log_init(&thd);
-
-  spectrum::Event event;
-  spectrum_log_read_last_event(&thd, &event);
-  storage_query_id = event.xid();
-  sql_print_information("Initialized spectrum storage query_id to %d", storage_query_id.load());
 
   trans_commit_stmt(&thd, true);
   trans_commit(&thd, true);

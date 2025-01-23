@@ -45,6 +45,25 @@ enum event_type_enum {
 typedef uint64 event_id_t;
 typedef uint64 commit_id_t;
 
+namespace spectrum_log {
+class THD_context {
+   private:
+     TABLE *m_event_table;
+     TABLE *m_commit_table;
+
+   public:
+     THD_context(TABLE* event_table, TABLE* commit_table) : m_event_table(event_table), m_commit_table(commit_table) {}
+
+     TABLE *event_table() {
+       return m_event_table;
+     }
+
+     TABLE *commit_table() {
+      return m_commit_table;
+     }
+};
+}
+
 namespace spectrum_storage {
 class THD_context {
   private:
@@ -54,9 +73,10 @@ class THD_context {
     commit_id_t m_commit_id;
     uint64 m_replication_stream_id;
     bool m_post_ddl;
+    std::unique_ptr<spectrum_log::THD_context> m_log_context;
 
   public:
-    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0), m_replication_stream_id(0), m_post_ddl(false) {}
+    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0), m_replication_stream_id(0), m_post_ddl(false), m_log_context(nullptr) {}
 
     query_id_t compute_query_id() {
       return m_compute_query_id;
@@ -94,6 +114,14 @@ class THD_context {
       m_post_ddl = post_ddl;
     }
 
+    spectrum_log::THD_context *log_context() {
+      return m_log_context.get();
+    }
+
+    void set_log_context(spectrum_log::THD_context *log_context) {
+      m_log_context.reset(log_context);
+    }
+
     my_xid xid();
     event_id_t next_event_id();
 };
@@ -110,6 +138,8 @@ extern void disable_spectrum_compute(THD *thd);
 extern void enable_spectrum_compute(THD *thd);
 
 extern spectrum::StorageNode::Stub* get_storage_primary_client();
+
+extern my_xid next_xid();
 
 extern void spectrum_print_row(char* method, TABLE* table);
 extern void spectrum_print_row(char* method, TABLE* table, uchar* record);
@@ -152,6 +182,8 @@ extern int spectrum_compute_post_ddl(THD *thd);
 
 extern void* spectrum_storage_init(void *);
 
+extern int spectrum_log_open(THD *thd);
+extern int spectrum_log_close(THD *thd);
 extern int spectrum_log_init(THD *thd);
 extern commit_id_t spectrum_log_max_commit_id();
 extern int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_name, uint64 handler_id);
@@ -162,9 +194,6 @@ extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *o
 extern int spectrum_log_prepare(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_commit(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid);
-extern int spectrum_log_read_commit(THD *thd, uint64 start_id_exclusive, spectrum::Commit *commit);
 extern int spectrum_log_write_event(THD *thd, spectrum::Event *event);
-extern int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *events);
-extern int spectrum_log_read_last_event(THD *thd, spectrum::Event *event);
 
 #endif

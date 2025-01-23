@@ -1,7 +1,7 @@
 connect(compute0,localhost,root,,,,/tmp/mysql-spectrum-compute-0.sock);
 connect(compute1,localhost,root,,,,/tmp/mysql-spectrum-compute-1.sock);
 
---let $db=spectrum_test_125
+--let $db=spectrum_test_129
 
 connection compute0;
 

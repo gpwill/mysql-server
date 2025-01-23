@@ -99,19 +99,37 @@ std::set<commit_id_t> prepared_commit_ids;
 mysql_mutex_t max_commit_id_lock;
 PSI_mutex_key max_commit_id_lock_psi_key;
 std::atomic<commit_id_t> max_commit_id;
-inline event_id_t next_commit_id() {
+commit_id_t next_commit_id() {
   mysql_mutex_lock(&max_commit_id_lock);
   ++max_commit_id;
   mysql_mutex_unlock(&max_commit_id_lock);
   return max_commit_id;
 }
 
-inline event_id_t update_max_commit_id(commit_id_t commit_id) {
+commit_id_t update_max_commit_id(commit_id_t commit_id) {
   mysql_mutex_lock(&max_commit_id_lock);
   if (commit_id > max_commit_id) {
     max_commit_id = commit_id;
   }
   mysql_mutex_unlock(&max_commit_id_lock);
+}
+
+mysql_mutex_t max_xid_lock;
+PSI_mutex_key max_xid_lock_psi_key;
+std::atomic<my_xid> max_xid;
+my_xid next_xid() {
+  mysql_mutex_lock(&max_xid_lock);
+  ++max_xid;
+  mysql_mutex_unlock(&max_xid_lock);
+  return max_xid;
+}
+
+my_xid update_max_xid(my_xid xid) {
+  mysql_mutex_lock(&max_xid_lock);
+  if (xid > max_xid) {
+    max_xid = xid;
+  }
+  mysql_mutex_unlock(&max_xid_lock);
 }
 
 std::unique_ptr<spectrum::StorageReplicaNode::Stub> storage_replica_client;
@@ -124,11 +142,11 @@ spectrum::StorageReplicaNode::Stub* get_storage_replica_client() {
   return storage_replica_client.get();
 }
 
-TABLE *find_or_open_event_table(THD *thd, thr_lock_type lock_type) {
+TABLE *open_event_table(THD *thd, thr_lock_type lock_type) {
   const char *db_name = "spectrum";
   const char *table_name = "events";
 
-  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, lock_type, thr_locked_row_action::THR_DEFAULT);
+  TABLE *table = spectrum_open_table(thd, db_name, table_name, 0, lock_type, thr_locked_row_action::THR_DEFAULT);
   assert(table);
 
   table->use_all_columns();
@@ -140,14 +158,17 @@ TABLE *find_or_open_event_table(THD *thd, thr_lock_type lock_type) {
   MDL_request mdl_request;
   MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, enum_mdl_type::MDL_SHARED_WRITE, enum_mdl_duration::MDL_TRANSACTION);
   thd->mdl_context.acquire_lock(&mdl_request, 10000);
+
+  MYSQL_LOCK *table_lock = mysql_lock_tables(thd, &table, 1, 0);
+  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, table_lock) : table_lock;
   return table;
 }
 
-TABLE *find_or_open_commit_table(THD *thd, thr_lock_type lock_type) {
+TABLE *open_commit_table(THD *thd, thr_lock_type lock_type) {
   const char *db_name = "spectrum";
   const char *table_name = "commits";
 
-  TABLE *table = spectrum_find_or_open_table(thd, db_name, table_name, lock_type, thr_locked_row_action::THR_DEFAULT);
+  TABLE *table = spectrum_open_table(thd, db_name, table_name, 0, lock_type, thr_locked_row_action::THR_DEFAULT);
   assert(table);
 
   table->use_all_columns();
@@ -159,7 +180,40 @@ TABLE *find_or_open_commit_table(THD *thd, thr_lock_type lock_type) {
   MDL_request mdl_request;
   MDL_REQUEST_INIT_BY_KEY(&mdl_request, &mdl_key, enum_mdl_type::MDL_SHARED_WRITE, enum_mdl_duration::MDL_TRANSACTION);
   thd->mdl_context.acquire_lock(&mdl_request, 10000);
+
+  MYSQL_LOCK *table_lock = mysql_lock_tables(thd, &table, 1, 0);
+  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, table_lock) : table_lock;
   return table;
+}
+
+int close_table(THD* thd, TABLE *table) {
+  mysql_unlock_some_tables(thd, &table, 1);
+  spectrum_find_and_close_table(thd, table->s->db.str, table->s->table_name.str, 0);
+  return 0;
+}
+
+int spectrum_log_open(THD *thd) {
+  if (thd->spectrum_storage_context()->log_context()) {
+    return 0;
+  }
+
+  TABLE *event_table = open_event_table(thd, thr_lock_type::TL_WRITE);
+  TABLE *commit_table = open_commit_table(thd, thr_lock_type::TL_WRITE);
+  spectrum_log::THD_context *log_context = new spectrum_log::THD_context(event_table, commit_table);
+  thd->spectrum_storage_context()->set_log_context(log_context);
+  return 0;
+}
+
+int spectrum_log_close(THD *thd) {
+  spectrum_log::THD_context *log_context = thd->spectrum_storage_context()->log_context();
+  if (!log_context) {
+    return 0;
+  }
+
+  close_table(thd, log_context->event_table());
+  close_table(thd, log_context->commit_table());
+  thd->spectrum_storage_context()->set_log_context(nullptr);
+  return 0;
 }
 
 int spectrum_log_build_event(my_xid xid, uint64 event_id, spectrum::event_type_enum event_type, ::google::protobuf::Message &event_body, spectrum::Event *event) {
@@ -187,10 +241,8 @@ int spectrum_log_build_event(TABLE *event_table, spectrum::Event *event) {
 
 int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
   int error = 0;
-  TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_WRITE);
-  
-  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
-  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+  spectrum_log::THD_context *log_context = thd->spectrum_storage_context()->log_context();
+  TABLE *event_table = log_context->event_table();
 
   memset(event_table->record[0], 0, event_table->s->null_bytes);
   event_table->field[0]->store(event->xid(), true);
@@ -200,17 +252,14 @@ int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
   if ((error = event_table->file->ha_write_row(event_table->record[0]))) {
     sql_print_information("spectrum_log_write_event: error=%d", error);
   }
-
-  mysql_unlock_some_tables(thd, &event_table, 1);
+  update_max_xid(event->xid());
   return error;
 }
 
 int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
   int error = 0;
-  TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_WRITE);
-  
-  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
-  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+  spectrum_log::THD_context *log_context = thd->spectrum_storage_context()->log_context();
+  TABLE *commit_table = log_context->commit_table();
 
   memset(commit_table->record[0], 0, commit_table->s->null_bytes);
   commit_table->field[0]->store(commit_id, true);
@@ -219,17 +268,11 @@ int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
     sql_print_information("spectrum_log_write_commit: error=%d", error);
   }
   update_max_commit_id(commit_id);
-
-  mysql_unlock_some_tables(thd, &commit_table, 1);
   return error;
 }
 
-int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *events) {
+int spectrum_log_read_events_by_xid(TABLE *event_table, my_xid xid, spectrum::EventList *events) {
   int error = 0;
-  TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_READ);
-  
-  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
-  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
 
   event_table->field[0]->store(xid, true);
   event_table->field[0]->set_notnull();
@@ -253,16 +296,26 @@ int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *e
   }
   event_table->file->ha_index_end();
 
-  mysql_unlock_some_tables(thd, &event_table, 1);
   return error;
 }
 
-int spectrum_log_read_last_event(THD *thd, spectrum::Event *event) {
+int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *events, enum_tx_isolation tx_isolation) {
   int error = 0;
-  TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_READ);
 
-  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
-  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+  thd->begin_attachable_ro_transaction();
+  thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+  thd->tx_isolation = tx_isolation;
+
+  TABLE *event_table = open_event_table(thd, thr_lock_type::TL_READ);
+  error = spectrum_log_read_events_by_xid(event_table, xid, events);
+  close_table(thd, event_table);
+
+  thd->end_attachable_transaction();
+  return error;
+}
+
+int spectrum_log_read_last_event(TABLE *event_table, spectrum::Event *event) {
+  int error = 0;
 
   event_table->file->ha_index_init(0, true);
   error = event_table->file->ha_index_last(event_table->record[0]);
@@ -277,16 +330,26 @@ int spectrum_log_read_last_event(THD *thd, spectrum::Event *event) {
   }
   event_table->file->ha_index_end();
 
-  mysql_unlock_some_tables(thd, &event_table, 1);
   return error;
 }
 
-int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_id_t end_id_inclusive, spectrum::CommitList *commits) {
+int spectrum_log_read_last_event(THD *thd, spectrum::Event *event, enum_tx_isolation tx_isolation) {
   int error = 0;
-  TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_READ);
-  
-  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
-  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+
+  thd->begin_attachable_ro_transaction();
+  thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+  thd->tx_isolation = tx_isolation;
+
+  TABLE *event_table = open_event_table(thd, thr_lock_type::TL_READ);
+  error = spectrum_log_read_last_event(event_table, event);
+  close_table(thd, event_table);
+
+  thd->end_attachable_transaction();
+  return error;
+}
+
+int spectrum_log_read_commits(TABLE *commit_table, TABLE *event_table, commit_id_t start_id_exclusive, commit_id_t end_id_inclusive, spectrum::CommitList *commits) {
+  int error = 0;
 
   commit_table->field[0]->store(start_id_exclusive, true);
   commit_table->field[0]->set_notnull();
@@ -307,7 +370,7 @@ int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_i
     spectrum::Commit *commit = commits->add_commit();
     commit->set_id(commit_id);
     commit->set_xid(commit_table->field[1]->val_int());
-    spectrum_log_read_events_by_xid(thd, commit->xid(), commit->mutable_events());
+    spectrum_log_read_events_by_xid(event_table, commit->xid(), commit->mutable_events());
     error = commit_table->file->ha_index_next(commit_table->record[0]);
   }
   if (error == HA_ERR_END_OF_FILE || error == HA_ERR_KEY_NOT_FOUND) error = 0;
@@ -317,16 +380,28 @@ int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_i
   }
   commit_table->file->ha_index_end();
 
-  mysql_unlock_some_tables(thd, &commit_table, 1);
   return error;
 }
 
-int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit) {
+int spectrum_log_read_commits(THD *thd, commit_id_t start_id_exclusive, commit_id_t end_id_inclusive, spectrum::CommitList *commits, enum_tx_isolation tx_isolation) {
   int error = 0;
-  TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_READ);
 
-  MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
-  thd->lock = thd->lock ? mysql_lock_merge(thd->lock, sql_lock) : sql_lock;
+  thd->begin_attachable_ro_transaction();
+  thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+  thd->tx_isolation = tx_isolation;
+  
+  TABLE *commit_table = open_commit_table(thd, thr_lock_type::TL_READ);
+  TABLE *event_table = open_event_table(thd, thr_lock_type::TL_READ);
+  error = spectrum_log_read_commits(commit_table, event_table, start_id_exclusive, end_id_inclusive, commits);
+  close_table(thd, commit_table);
+  close_table(thd, event_table);
+
+  thd->end_attachable_transaction();
+  return error;
+}
+
+int spectrum_log_read_last_commit(TABLE *commit_table, TABLE *event_table, spectrum::Commit *commit) {
+  int error = 0;
 
   commit_table->file->ha_index_init(0, true);
   error = commit_table->file->ha_index_last(commit_table->record[0]);
@@ -334,7 +409,7 @@ int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit) {
     spectrum_print_row("spectrum_log_read_last_commit", commit_table);
     commit->set_id(commit_table->field[0]->val_int());
     commit->set_xid(commit_table->field[1]->val_int());
-    spectrum_log_read_events_by_xid(thd, commit->xid(), commit->mutable_events());
+    spectrum_log_read_events_by_xid(event_table, commit->xid(), commit->mutable_events());
   }
   if (error == HA_ERR_END_OF_FILE || error == HA_ERR_KEY_NOT_FOUND) error = 0;
   if (error) {
@@ -343,7 +418,23 @@ int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit) {
   }
   commit_table->file->ha_index_end();
 
-  mysql_unlock_some_tables(thd, &commit_table, 1);
+  return error;
+}
+
+int spectrum_log_read_last_commit(THD *thd, spectrum::Commit *commit, enum_tx_isolation tx_isolation) {
+  int error = 0;
+
+  thd->begin_attachable_ro_transaction();
+  thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+  thd->tx_isolation = tx_isolation;
+
+  TABLE *commit_table = open_commit_table(thd, thr_lock_type::TL_READ);
+  TABLE *event_table = open_event_table(thd, thr_lock_type::TL_READ);
+  error = spectrum_log_read_last_commit(commit_table, event_table, commit);
+  close_table(thd, commit_table);
+  close_table(thd, event_table);
+
+  thd->end_attachable_transaction();
   return error;
 }
 
@@ -405,6 +496,8 @@ class ReplicationStream {
       commit_id_t max_commit_id;
       spectrum::CommitList commits;
       std::set<commit_id_t> prepared_commit_ids_copy;
+      TABLE *commit_table;
+      TABLE *event_table;
 
       spectrum::InitReplicationStreamRequest request;
       spectrum::InitReplicationStreamResponse response;
@@ -431,12 +524,7 @@ class ReplicationStream {
 
       m_stream = get_storage_replica_client()->Replicate(new grpc::ClientContext());
 
-      thd->begin_attachable_ro_transaction();
-      thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
-      thd->tx_isolation = enum_tx_isolation::ISO_READ_UNCOMMITTED;
-      spectrum_log_read_commits(thd, last_replicated_commit_id, max_commit_id, &commits);
-      thd->end_attachable_transaction();
-
+      spectrum_log_read_commits(thd, last_replicated_commit_id, max_commit_id, &commits, enum_tx_isolation::ISO_READ_UNCOMMITTED);
       for (spectrum::Commit commit : commits.commit()) {
         spectrum::EventList events = commit.events();
         for (spectrum::Event event : events.event()) {
@@ -469,11 +557,7 @@ class ReplicationStream {
       if (storage_thd_context->replication_stream_id() &&
           storage_thd_context->replication_stream_id() != m_stream_id) {
         spectrum::EventList events;
-        thd->begin_attachable_ro_transaction();
-        thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
-        thd->tx_isolation = enum_tx_isolation::ISO_READ_UNCOMMITTED;
-        spectrum_log_read_events_by_xid(thd, event->xid(), &events);
-        thd->end_attachable_transaction();
+        spectrum_log_read_events_by_xid(thd, event->xid(), &events, enum_tx_isolation::ISO_READ_UNCOMMITTED);
         for (spectrum::Event e : events.event()) {
           if (e.id() != event->id()) {
             if ((error = write_nolock(&e, false))) {
@@ -679,11 +763,17 @@ int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
 
 int spectrum_log_init(THD *thd) {
   mysql_mutex_init(max_commit_id_lock_psi_key, &max_commit_id_lock, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(max_xid_lock_psi_key, &max_xid_lock, MY_MUTEX_INIT_FAST);
 
   spectrum::Commit last_commit;
-  spectrum_log_read_last_commit(thd, &last_commit);
-  max_commit_id = last_commit.id();
+  spectrum_log_read_last_commit(thd, &last_commit, enum_tx_isolation::ISO_READ_COMMITTED);
+  update_max_commit_id(last_commit.id());
   sql_print_information("Initialized spectrum log max_commit_id to %d", max_commit_id.load());
+
+  spectrum::Event last_event;
+  spectrum_log_read_last_event(thd, &last_event, enum_tx_isolation::ISO_READ_COMMITTED);
+  update_max_xid(last_event.xid());
+  sql_print_information("Initialized spectrum log max_xid to %d", max_xid.load());
 
   return 0;
 }
