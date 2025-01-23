@@ -841,6 +841,9 @@ int spectrum_compute_post_ddl(THD *thd) {
 
   sql_print_information("spectrum_compute_post_ddl[%d]: satrt", thd->spectrum_thread_id);
 
+  // Treat post_ddl as a new statement transaction
+  thd->set_query_id(next_query_id());
+
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
 

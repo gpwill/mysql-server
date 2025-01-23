@@ -52,9 +52,11 @@ class THD_context {
     query_id_t m_compute_query_id;
     event_id_t m_event_id;
     commit_id_t m_commit_id;
+    uint64 m_replication_stream_id;
+    bool m_post_ddl;
 
   public:
-    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0) {}
+    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0), m_replication_stream_id(0), m_post_ddl(false) {}
 
     query_id_t compute_query_id() {
       return m_compute_query_id;
@@ -74,6 +76,22 @@ class THD_context {
 
     void clear_commit_id() {
       m_commit_id = 0;
+    }
+
+    uint64 replication_stream_id() {
+      return m_replication_stream_id;
+    }
+
+    void set_replication_stream_id(uint64 replication_stream_id) {
+      m_replication_stream_id = replication_stream_id;
+    }
+
+    bool post_ddl() {
+      return m_post_ddl;
+    }
+
+    void set_post_ddl(bool post_ddl) {
+      m_post_ddl = post_ddl;
     }
 
     my_xid xid();
@@ -141,8 +159,8 @@ extern int spectrum_log_delete_table(THD *thd, const char* db_name, const char* 
 extern int spectrum_log_post_ddl(THD *thd);
 extern int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id object_id, const char* object_name);
 extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
-extern int spectrum_log_prepare(THD *thd, bool all);
-extern int spectrum_log_commit(THD *thd, bool all);
+extern int spectrum_log_prepare(THD *thd, bool all, bool real_trans);
+extern int spectrum_log_commit(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid);
 extern int spectrum_log_read_commit(THD *thd, uint64 start_id_exclusive, spectrum::Commit *commit);
 extern int spectrum_log_write_event(THD *thd, spectrum::Event *event);

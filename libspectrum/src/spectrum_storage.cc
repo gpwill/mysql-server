@@ -214,9 +214,7 @@ int update_metadata(THD *thd, const char* table_name, dd::Object_id object_id, c
   return 0;
 }
 
-int post_ddl(THD *thd) {
-  sql_print_information("PostDDL");
-
+int run_post_ddl(THD *thd) {
   handlerton *hton = ha_default_handlerton(thd);
   hton->post_ddl(thd);
   return 0;
@@ -264,9 +262,16 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
     ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
       THD *thd = create_thd(request->thread());
-      post_ddl(thd);
+      Transaction_ctx *trn_ctx = thd->get_transaction();
 
+      // Auto commit the events for post_ddl
+      thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
       spectrum_log_post_ddl(thd);
+      ha_commit_low(thd, false, false);
+      trn_ctx->cleanup();
+      thd->tx_priority = 0;
+
+      run_post_ddl(thd);
       return grpc::Status::OK; 
     }
 
@@ -534,11 +539,23 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
     ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequest* request, ::spectrum::PrepareResponse* response) {
       THD *thd = create_thd(request->thread());
       bool all = request->all();
+      Transaction_ctx *trn_ctx = thd->get_transaction();
+      bool real_trans = (all || !trn_ctx->is_active(Transaction_ctx::SESSION));
 
-      sql_print_information("Prepare[%d]: all=%d", thd->spectrum_thread_id, all);
+      sql_print_information("Prepare[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
       if (check_and_coalesce_trx_read_write(thd, all)) {
-        spectrum_log_prepare(thd, all);
+        spectrum_log_prepare(thd, all, real_trans);
+        // If we are committing the whole transaction, the written commit events
+        // in spectrum log need to be committed as a separate statement transaction belonging
+        // to the whole transactions.
+        // 
+        // If we are committing the statement transaction, the written commit events
+        // can be committed in the same statement transaction.
+        if (all) {
+          ha_prepare_low(thd, false);
+          ha_commit_low(thd, false);
+        }
       } else {
         sql_print_information("Prepare[%d]: skip spectrum log prepare for readonly transaction", thd->spectrum_thread_id);
       }
@@ -551,19 +568,19 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       THD *thd = create_thd(request->thread());
       Transaction_ctx *trn_ctx = thd->get_transaction();
       bool all = request->all();
+      bool real_trans = (all || !trn_ctx->is_active(Transaction_ctx::SESSION));
 
-      sql_print_information("Commit[%d]: all=%d", thd->spectrum_thread_id, all);
+      sql_print_information("Commit[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
       if (check_and_coalesce_trx_read_write(thd, all)) {
-        spectrum_log_commit(thd, all);
+        spectrum_log_commit(thd, all, real_trans);
       } else {
         sql_print_information("Commit[%d]: skip spectrum log commit for readonly transaction", thd->spectrum_thread_id);
       }
   
       ha_commit_low(thd, all, false);
-
-      bool is_real_trans = all || !trn_ctx->is_active(Transaction_ctx::SESSION);
-      if (is_real_trans) {
+      
+      if (real_trans) {
         trn_ctx->cleanup();
         thd->tx_priority = 0;
       }
@@ -738,9 +755,15 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
       THD *thd = create_thd(request.thread());
-      post_ddl(thd);
+      Transaction_ctx *trn_ctx = thd->get_transaction();
 
+      // Auto commit the events for post_ddl
+      thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
       spectrum_log_write_event(thd, &event);
+      trn_ctx->cleanup();
+      thd->tx_priority = 0;
+
+      run_post_ddl(thd);
       return 0;
     }
 
@@ -819,14 +842,29 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       spectrum::PrepareRequest request;
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
-      sql_print_information("Prepare: all=%d", request.all());
-
       THD *thd = create_thd(request.thread());
+      Transaction_ctx *trn_ctx = thd->get_transaction();
+      bool all = request.all();
+      commit_id_t commit_id = request.commit_id();
+
+      sql_print_information("Prepare: all=%d, commit_id=%d", all, commit_id);
 
       spectrum_log_write_event(thd, &event);
-      spectrum_log_write_commit(thd, request.commit_id(), event.xid());
 
-      ha_prepare_low(thd, request.all());
+      // 0 commit_id means it's an non-autocommit statement transaction, not the real transaction,
+      // don't write the actual commit to spectrum log.
+      if (commit_id) {
+        bool real_trans = (all || !trn_ctx->is_active(Transaction_ctx::SESSION));
+        assert(real_trans);
+        spectrum_log_write_commit(thd, commit_id, event.xid());
+      }
+
+      if (all) {
+        ha_prepare_low(thd, false);
+        ha_commit_low(thd, false);
+      }
+
+      ha_prepare_low(thd, all);
       return 0;
     }
 
@@ -834,14 +872,16 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       spectrum::CommitRequest request;
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
-      sql_print_information("Commit: all=%d", request.all());
-
       THD *thd = create_thd(request.thread());
+      bool all = request.all();
+      commit_id_t commit_id = request.commit_id();
+
+      sql_print_information("Commit: all=%d, commit_id=%d", all, commit_id);
 
       close_thread_tables(thd);
 
-      ha_commit_low(thd, request.all(), false);
-      if (request.all()) {
+      ha_commit_low(thd, all, false);
+      if (all) {
         thd->mdl_context.release_transactional_locks();
       }
       return 0;

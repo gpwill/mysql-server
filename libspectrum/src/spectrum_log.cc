@@ -186,6 +186,7 @@ int spectrum_log_build_event(TABLE *event_table, spectrum::Event *event) {
 }
 
 int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
+  int error = 0;
   TABLE *event_table = find_or_open_event_table(thd, thr_lock_type::TL_WRITE);
   
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &event_table, 1, 0);
@@ -196,13 +197,16 @@ int spectrum_log_write_event(THD *thd, spectrum::Event *event) {
   event_table->field[1]->store(event->id(), true);
   event_table->field[2]->store(event->type(), true);
   event_table->field[3]->store(event->body().data(), event->body().length(), event_table->field[3]->charset());
-  event_table->file->ha_write_row(event_table->record[0]);
+  if ((error = event_table->file->ha_write_row(event_table->record[0]))) {
+    sql_print_information("spectrum_log_write_event: error=%d", error);
+  }
 
   mysql_unlock_some_tables(thd, &event_table, 1);
-  return 0;
+  return error;
 }
 
 int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
+  int error = 0;
   TABLE *commit_table = find_or_open_commit_table(thd, thr_lock_type::TL_WRITE);
   
   MYSQL_LOCK *sql_lock = mysql_lock_tables(thd, &commit_table, 1, 0);
@@ -211,12 +215,13 @@ int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid) {
   memset(commit_table->record[0], 0, commit_table->s->null_bytes);
   commit_table->field[0]->store(commit_id, true);
   commit_table->field[1]->store(xid, true);
-  commit_table->file->ha_write_row(commit_table->record[0]);
+  if ((error = commit_table->file->ha_write_row(commit_table->record[0]))) {
+    sql_print_information("spectrum_log_write_commit: error=%d", error);
+  }
+  update_max_commit_id(commit_id);
 
   mysql_unlock_some_tables(thd, &commit_table, 1);
-
-  update_max_commit_id(commit_id);
-  return 0;
+  return error;
 }
 
 int spectrum_log_read_events_by_xid(THD *thd, my_xid xid, spectrum::EventList *events) {
@@ -432,20 +437,16 @@ class ReplicationStream {
       spectrum_log_read_commits(thd, last_replicated_commit_id, max_commit_id, &commits);
       thd->end_attachable_transaction();
 
-      for (int c = 0; c < commits.commit_size(); c++) {
-        spectrum::Commit commit = commits.commit(c);
+      for (spectrum::Commit commit : commits.commit()) {
         spectrum::EventList events = commit.events();
-        for (int e = 0; e < events.event_size(); e++) {
-          spectrum::Event event = events.event(e);
-          if (write_nolock(&event, false)) {
-            error = HA_ERR_GENERIC;
+        for (spectrum::Event event : events.event()) {
+          if ((error = write_nolock(&event, false))) {
             goto end;
           }
           if (event.type() == spectrum::event_type_enum::PREPARE &&
               prepared_commit_ids_copy.find(commit.id()) == prepared_commit_ids_copy.end()) {
             event.set_type(spectrum::event_type_enum::COMMIT);
-            if (write_nolock(&event, false)) {
-              error = HA_ERR_GENERIC;
+            if ((error = write_nolock(&event, false))) {
               goto end;
             }
           }
@@ -459,11 +460,32 @@ class ReplicationStream {
       return error;
     }
 
-    int write(spectrum::Event *event, bool wait_response) {
-      int error;
+    int write(THD* thd, spectrum::Event *event, bool wait_response) {
+      int error = 0;
+      spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
 
       mysql_mutex_lock(&replication_lock);
+
+      if (storage_thd_context->replication_stream_id() &&
+          storage_thd_context->replication_stream_id() != m_stream_id) {
+        spectrum::EventList events;
+        thd->begin_attachable_ro_transaction();
+        thd->lex->sql_command = enum_sql_command::SQLCOM_SELECT;
+        thd->tx_isolation = enum_tx_isolation::ISO_READ_UNCOMMITTED;
+        spectrum_log_read_events_by_xid(thd, event->xid(), &events);
+        thd->end_attachable_transaction();
+        for (spectrum::Event e : events.event()) {
+          if (e.id() != event->id()) {
+            if ((error = write_nolock(&e, false))) {
+              goto end;
+            }
+          }
+        }
+      }
+      storage_thd_context->set_replication_stream_id(m_stream_id);
+
       error = write_nolock(event, wait_response);
+    end:
       mysql_mutex_unlock(&replication_lock);
       return error;
     }
@@ -494,7 +516,7 @@ int spectrum_log_create_table(THD *thd, const char* db_name, const char* table_n
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::CREATE_TABLE, event_body, &event);
   spectrum_log_write_event(thd, &event);
-  if (get_replication_stream(thd)->write(&event, false)) {
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
     sql_print_error("spectrum_log_create_table[%s:%s:%d]: stream write error",
         event_body.database().c_str(), event_body.table().c_str(), handler_id);
   }
@@ -517,7 +539,7 @@ int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_n
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::DELETE_TABLE, event_body, &event);
   spectrum_log_write_event(thd, &event);
-  if (get_replication_stream(thd)->write(&event, false)) {
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
     sql_print_error("spectrum_log_delete_table[%s:%s]: stream write error", db_name, table_name);
   }
   return 0;
@@ -536,7 +558,7 @@ int spectrum_log_post_ddl(THD *thd) {
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::POST_DDL, event_body, &event);
   spectrum_log_write_event(thd, &event);
-  if (get_replication_stream(thd)->write(&event, false)) {
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
     sql_print_error("spectrum_log_post_ddl: stream write error");
   }
   return 0;
@@ -559,7 +581,7 @@ int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id obje
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::UPDATE_METADATA, event_body, &event);
   spectrum_log_write_event(thd, &event);
-  if (get_replication_stream(thd)->write(&event, false)) {
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
     sql_print_error("spectrum_log_update_metadata: stream write error");
   }
   return 0;
@@ -586,29 +608,31 @@ int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row)
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::ADD_ROW, event_body, &event);
   spectrum_log_write_event(thd, &event);
-  if (get_replication_stream(thd)->write(&event, false)) {
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
     sql_print_error("spectrum_log_add_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
   }
   return 0;
 }
 
-int spectrum_log_prepare(THD *thd, bool all) {
+int spectrum_log_prepare(THD *thd, bool all, bool real_trans) {
   spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
+  commit_id_t commit_id = 0;
 
-  sql_print_information("spectrum_log_prepare: all=%d", all);
+  sql_print_information("spectrum_log_prepare: all=%d, real_trans=%d, xid=%d", all, real_trans, xid);
 
   // Replication stream needs to be intialized before prepare_shared_lock to avoid deadlock
   // with replication_lock
   ReplicationStream *replication_stream = get_replication_stream(thd);
   std::shared_lock<std::shared_mutex> prepare_shared_lock(prepare_mutex);
 
-  commit_id_t commit_id = next_commit_id();
-  spectrum_log_write_commit(thd, commit_id, xid);
-
-  prepared_commit_ids.insert(commit_id);
-  storage_thd_context->set_commit_id(commit_id);
+  if (real_trans) {
+    commit_id = next_commit_id();
+    spectrum_log_write_commit(thd, commit_id, xid);
+    prepared_commit_ids.insert(commit_id);
+    storage_thd_context->set_commit_id(commit_id);
+  }
 
   spectrum::PrepareRequest event_body;
   spectrum_thread_fill(thd, event_body.mutable_thread());
@@ -619,32 +643,35 @@ int spectrum_log_prepare(THD *thd, bool all) {
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::PREPARE, event_body, &event);
   spectrum_log_write_event(thd, &event);
   bool wait_response = all || !thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
-  if (replication_stream->write(&event, wait_response)) {
+  if (replication_stream->write(thd, &event, wait_response)) {
     sql_print_error("spectrum_log_prepare: stream write error");
   }
   return 0;
 }
 
-int spectrum_log_commit(THD *thd, bool all) {
+int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
   spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
   commit_id_t commit_id = storage_thd_context->commit_id();
 
-  sql_print_information("spectrum_log_commit: all=%d", all);
+  sql_print_information("spectrum_log_commit: all=%d, real_trans=%d, xid=%d, commit_id=%d", all, real_trans, xid, commit_id);
 
   std::shared_lock<std::shared_mutex> commit_shared_lock(commit_mutex);
 
-  prepared_commit_ids.erase(commit_id);
-  storage_thd_context->clear_commit_id();
+  if (real_trans) {
+    prepared_commit_ids.erase(commit_id);
+    storage_thd_context->clear_commit_id();
+  }
 
   spectrum::CommitRequest event_body;
   spectrum_thread_fill(thd, event_body.mutable_thread());
   event_body.set_all(all);
+  event_body.set_commit_id(commit_id);
 
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::COMMIT, event_body, &event);
-  if (replication_stream->write(&event, false)) {
+  if (replication_stream->write(thd, &event, false)) {
     sql_print_error("spectrum_log_commit: stream write error");
   }
   return 0;
@@ -657,6 +684,8 @@ int spectrum_log_init(THD *thd) {
   spectrum_log_read_last_commit(thd, &last_commit);
   max_commit_id = last_commit.id();
   sql_print_information("Initialized spectrum log max_commit_id to %d", max_commit_id.load());
+
+  return 0;
 }
 
 commit_id_t spectrum_log_max_commit_id() {
