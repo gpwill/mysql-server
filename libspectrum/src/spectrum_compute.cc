@@ -841,8 +841,10 @@ int spectrum_compute_post_ddl(THD *thd) {
 
   sql_print_information("spectrum_compute_post_ddl[%d]: satrt", thd->spectrum_thread_id);
 
-  // Treat post_ddl as a new statement transaction
+  // Treat post_ddl as a separate auto-commit statement transaction
   thd->set_query_id(next_query_id());
+  ulonglong saved_option_bits = thd->variables.option_bits;
+  thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -854,6 +856,10 @@ int spectrum_compute_post_ddl(THD *thd) {
     assert(false);
   }
 
+  spectrum_compute_prepare(thd, false);
+  spectrum_compute_commit(thd, false);
+
+  thd->variables.option_bits = saved_option_bits;
   return 0;
 }
 

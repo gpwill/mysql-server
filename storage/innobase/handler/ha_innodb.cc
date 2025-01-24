@@ -4204,7 +4204,7 @@ static void innobase_post_recover() {
 
   ut_a(innodb_inited);
 
-  if (!opt_initialize) {
+  if (!opt_initialize && !is_spectrum_storage()) {
     if (!log_pfs_create_tables()) {
       ib::warn(ER_IB_MSG_LOG_PFS_CREATE_TABLES_FAILED);
     }

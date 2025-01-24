@@ -207,7 +207,8 @@ int update_metadata(THD *thd, const char* table_name, dd::Object_id object_id, c
   return 0;
 }
 
-int run_post_ddl(THD *thd) {
+int post_ddl(THD *thd) {
+  sql_print_information("run post_ddl");
   handlerton *hton = ha_default_handlerton(thd);
   hton->post_ddl(thd);
   return 0;
@@ -257,18 +258,14 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
     ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
       THD *thd = create_thd(request->thread());
-      Transaction_ctx *trn_ctx = thd->get_transaction();
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
 
-      // Auto commit the events for post_ddl
-      thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
+      sql_print_information("PostDDL");
+      thd_storage_context->set_post_ddl(true);
+
       spectrum_log_open(thd);
       spectrum_log_post_ddl(thd);
-      ha_commit_low(thd, false, false);
-      spectrum_log_close(thd);
-      trn_ctx->cleanup();
-      thd->tx_priority = 0;
 
-      run_post_ddl(thd);
       return grpc::Status::OK; 
     }
 
@@ -570,6 +567,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       Transaction_ctx *trn_ctx = thd->get_transaction();
       bool all = request->all();
       bool real_trans = (all || !trn_ctx->is_active(Transaction_ctx::SESSION));
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
 
       sql_print_information("Commit[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
@@ -587,6 +585,11 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       if (real_trans) {
         trn_ctx->cleanup();
         thd->tx_priority = 0;
+      }
+
+      if (thd_storage_context->post_ddl()) {
+        post_ddl(thd);
+        thd_storage_context->set_post_ddl(false);
       }
       return grpc::Status::OK; 
     }
@@ -764,17 +767,13 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
       THD *thd = create_thd(request.thread());
-      Transaction_ctx *trn_ctx = thd->get_transaction();
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
 
-      // Auto commit the events for post_ddl
-      thd->variables.option_bits &= ~(OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
+      sql_print_information("PostDDL");
+      thd_storage_context->set_post_ddl(true);
+
       spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
-      spectrum_log_close(thd);
-      trn_ctx->cleanup();
-      thd->tx_priority = 0;
-
-      run_post_ddl(thd);
       return 0;
     }
 
@@ -824,18 +823,22 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
       }
 
+      table->file->ha_index_init(table->s->primary_key, false);
+      int e = table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT);
+      if (e == HA_ERR_KEY_NOT_FOUND || e == HA_ERR_END_OF_FILE) {
+        sql_print_information("ReplicateRowOld: null");
+      } else {
+        spectrum_print_row("ReplicateRowOld", table, table->record[1]);
+      }
+      table->file->ha_index_end();
       if (request.has_old_row()) {
-        table->file->ha_index_init(table->s->primary_key, false);
-        table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT);
         if (request.has_new_row()) {
-          spectrum_print_row("ReplicateRowOld", table, table->record[1]);
           spectrum_print_row("ReplicateRowUpdate", table, table->record[0]);
           err = table->file->ha_update_row(table->record[1], table->record[0]);
         } else {
           spectrum_print_row("ReplicateRowDelete", table, table->record[1]);
           err = table->file->ha_delete_row(table->record[1]);
         }
-        table->file->ha_index_end();
       } else {
         assert(request.has_new_row());
         spectrum_print_row("ReplicateRowNew", table, table->record[0]);
@@ -887,6 +890,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
       THD *thd = create_thd(request.thread());
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
       bool all = request.all();
       commit_id_t commit_id = request.commit_id();
 
@@ -900,6 +904,11 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       if (all) {
         thd->mdl_context.release_transactional_locks();
+      }
+
+      if (thd_storage_context->post_ddl()) {
+        post_ddl(thd);
+        thd_storage_context->set_post_ddl(false);
       }
       return 0;
     }
