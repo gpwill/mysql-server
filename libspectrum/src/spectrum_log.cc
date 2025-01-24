@@ -726,8 +726,7 @@ int spectrum_log_prepare(THD *thd, bool all, bool real_trans) {
   spectrum::Event event;
   spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::PREPARE, event_body, &event);
   spectrum_log_write_event(thd, &event);
-  bool wait_response = all || !thd_test_options(thd, OPTION_NOT_AUTOCOMMIT | OPTION_BEGIN);
-  if (replication_stream->write(thd, &event, wait_response)) {
+  if (replication_stream->write(thd, &event, real_trans)) {
     sql_print_error("spectrum_log_prepare: stream write error");
   }
   return 0;
