@@ -216,6 +216,9 @@ int post_ddl(THD *thd) {
 
 class StorageNodeImpl final : public spectrum::StorageNode::Service {
   private:
+    mysql_mutex_t prepare_lock;
+    PSI_mutex_key prepare_lock_psi_key;
+
     MDL_ticket *find_ticket_by_number(THD* thd, enum_mdl_duration duration, int32 ticket_number) {
       MDL_ticket *ticket = nullptr;
       MDL_context::Ticket_iterator ticket_it = thd->mdl_context.get_tickets_for_duration(duration);
@@ -228,6 +231,10 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
     }
 
   public:
+    StorageNodeImpl() {
+      mysql_mutex_init(prepare_lock_psi_key, &prepare_lock, MY_MUTEX_INIT_FAST);
+    }
+
     ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
       THD *thd;
       const char* db_name = request->database().c_str();
@@ -539,6 +546,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       sql_print_information("Prepare[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
       if (check_and_coalesce_trx_read_write(thd, all)) {
+        mysql_mutex_lock(&prepare_lock);
         spectrum_log_open(thd);
         spectrum_log_prepare(thd, all, real_trans);
         // If we are committing the whole transaction, the written commit events
@@ -551,11 +559,12 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
           ha_prepare_low(thd, false);
           ha_commit_low(thd, false);
         }
+        ha_prepare_low(thd, all);
+        mysql_mutex_unlock(&prepare_lock);
       } else {
         sql_print_information("Prepare[%d]: skip spectrum log prepare for readonly transaction", thd->spectrum_thread_id);
+        ha_prepare_low(thd, all);
       }
-
-      ha_prepare_low(thd, all);
       return grpc::Status::OK; 
     }
 

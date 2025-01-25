@@ -755,9 +755,6 @@ int spectrum_log_prepare(THD *thd, bool all, bool real_trans) {
 
   sql_print_information("spectrum_log_prepare: all=%d, real_trans=%d, xid=%d", all, real_trans, xid);
 
-  // Replication stream needs to be intialized before prepare_shared_lock to avoid deadlock
-  // with replication_lock
-  ReplicationStream *replication_stream = get_replication_stream(thd);
   std::shared_lock<std::shared_mutex> prepare_shared_lock(prepare_mutex);
 
   if (real_trans) {
