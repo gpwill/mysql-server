@@ -282,10 +282,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = create_thd(request->thread());
       table = spectrum_find_or_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
-
-      table->reginfo.lock_type = lock_type;
-      MYSQL_LOCK *lock = mysql_lock_tables(thd, &table, 1, 0);
-      thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
+      spectrum_lock_table(thd, table, lock_type);
 
       return grpc::Status::OK; 
     }
@@ -303,8 +300,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       thd = create_thd(request->thread());
       table = spectrum_find_or_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
-
-      mysql_unlock_some_tables(thd, &table, 1);
+      spectrum_unlock_table(thd, table);
 
       return grpc::Status::OK; 
     }
@@ -475,12 +471,12 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table->file->ha_write_row(table->record[0]);
       response->set_insert_id(table->file->insert_id_for_cur_row);
       table->file->ha_release_auto_increment();
-
       spectrum_print_row("WriteRowNew", table);
-      spectrum_row_fill_fields(table, response->mutable_row());
 
       spectrum_log_open(thd);
-      spectrum_log_add_row(thd, table, table->record[0], nullptr);
+      spectrum_log_write_row(thd, table, table->record[0]);
+
+      spectrum_row_fill_fields(table, response->mutable_row());
       return grpc::Status::OK; 
     }
 
@@ -506,9 +502,10 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
 
       table->file->ha_update_row(table->record[1], table->record[0]);
       table->file->ha_release_auto_increment();
+      spectrum_print_row("UpdateRowNew", table);
 
       spectrum_log_open(thd);
-      spectrum_log_add_row(thd, table, table->record[0], table->record[1]);
+      spectrum_log_update_row(thd, table, table->record[0], table->record[1]);
       return grpc::Status::OK; 
     }
 
@@ -529,7 +526,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       table->file->ha_delete_row(table->record[0]);
 
       spectrum_log_open(thd);
-      spectrum_log_add_row(thd, table, nullptr, table->record[0]);
+      spectrum_log_delete_row(thd, table, table->record[0]);
       return grpc::Status::OK;
     }
 
@@ -794,8 +791,34 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       return 0;
     }
 
-    int ReplicateRow(spectrum::Event &event) {
-      spectrum::ReplicateRowRequest request;
+    int WriteRow(spectrum::Event &event) {
+      spectrum::WriteRowRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
+
+      THD *thd;
+      TABLE *table;
+      thr_lock_type lock_type = TL_WRITE;
+      thr_locked_row_action lock_action = (thr_locked_row_action)request.lock_action();
+      int err;
+
+      thd = create_thd(request.thread());
+      table = spectrum_find_or_open_table(thd, request.database().c_str(), request.table().c_str(), request.handler(), lock_type, lock_action);
+      spectrum_lock_table(thd, table, lock_type);
+      empty_record(table);
+
+      spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.row());
+      spectrum_print_row("WriteRow", table, table->record[0]);
+      if ((err = table->file->ha_write_row(table->record[0]))) {
+        sql_print_error("WriteRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
+      }
+
+      spectrum_log_open(thd);
+      spectrum_log_write_event(thd, &event);
+      return err;
+    }
+
+    int UpdateRow(spectrum::Event &event) {
+      spectrum::UpdateRowRequest request;
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
       THD *thd;
@@ -807,51 +830,67 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
 
       thd = create_thd(request.thread());
       table = spectrum_find_or_open_table(thd, request.database().c_str(), request.table().c_str(), request.handler(), lock_type, lock_action);
+      spectrum_lock_table(thd, table, lock_type);
       empty_record(table);
 
-      if (request.has_new_row()) {
-        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.new_row());
-      } else {
-        spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.old_row());
-      }
+      spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.new_row());
+      spectrum_print_row("UpdateRow", table, table->record[0]);
       key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
-      
-      // Only lock if unlocked, ha_external_lock doesn't accept consecutive locks
-      if (table->file->get_lock_type() == F_UNLCK) {
-        table->reginfo.lock_type = lock_type;
-        MYSQL_LOCK *lock = mysql_lock_tables(thd, &table, 1, 0);
-        thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
-      }
 
       table->file->ha_index_init(table->s->primary_key, false);
-      int e = table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT);
-      if (e == HA_ERR_KEY_NOT_FOUND || e == HA_ERR_END_OF_FILE) {
-        sql_print_information("ReplicateRowOld: null");
-      } else {
-        spectrum_print_row("ReplicateRowOld", table, table->record[1]);
+      if ((err = table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT))) {
+        sql_print_error("UpdateRow[%s:%s:%d]: failed to find existing row, error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
+        goto end;
       }
+      spectrum_print_row("UpdateRowExisting", table, table->record[1]);
       table->file->ha_index_end();
-      if (request.has_old_row()) {
-        if (request.has_new_row()) {
-          spectrum_print_row("ReplicateRowUpdate", table, table->record[0]);
-          err = table->file->ha_update_row(table->record[1], table->record[0]);
-        } else {
-          spectrum_print_row("ReplicateRowDelete", table, table->record[1]);
-          err = table->file->ha_delete_row(table->record[1]);
-        }
-      } else {
-        assert(request.has_new_row());
-        spectrum_print_row("ReplicateRowNew", table, table->record[0]);
-        err = table->file->ha_write_row(table->record[0]);
-      }
-
-      if (err) {
-        sql_print_error("ReplicateRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
+      
+      if ((err = table->file->ha_update_row(table->record[1], table->record[0]))) {
+        sql_print_error("UpdateRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
       }
 
       spectrum_log_open(thd);
       spectrum_log_write_event(thd, &event);
-      return 0;
+    end:
+      return err;
+    }
+
+    int DeleteRow(spectrum::Event &event) {
+      spectrum::DeleteRowRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
+
+      THD *thd;
+      TABLE *table;
+      thr_lock_type lock_type = TL_WRITE;
+      thr_locked_row_action lock_action = (thr_locked_row_action)request.lock_action();
+      uchar key[MAX_KEY_LENGTH];
+      int err;
+
+      thd = create_thd(request.thread());
+      table = spectrum_find_or_open_table(thd, request.database().c_str(), request.table().c_str(), request.handler(), lock_type, lock_action);
+      spectrum_lock_table(thd, table, lock_type);
+      empty_record(table);
+
+      spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.row());
+      spectrum_print_row("DeleteRow", table, table->record[0]);
+      key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
+
+      table->file->ha_index_init(table->s->primary_key, false);
+      if ((err = table->file->ha_index_read_map(table->record[1], key, HA_WHOLE_KEY, HA_READ_KEY_EXACT))) {
+        sql_print_error("DeleteRow[%s:%s:%d]: failed to find existing row, error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
+        goto end;
+      }
+      spectrum_print_row("DeleteRowExisting", table, table->record[1]);
+      table->file->ha_index_end();
+
+      if ((err = table->file->ha_delete_row(table->record[1]))) {
+        sql_print_error("DeleteRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
+      }
+
+      spectrum_log_open(thd);
+      spectrum_log_write_event(thd, &event);
+    end:
+      return err;
     }
 
     int Prepare(spectrum::Event &event) {
@@ -946,8 +985,12 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
             PostDDL(event);
           } else if (event_type == spectrum::event_type_enum::UPDATE_METADATA) {
             UpdateMetadata(event);
-          } else if (event_type == spectrum::event_type_enum::ADD_ROW) {
-            ReplicateRow(event);
+          } else if (event_type == spectrum::event_type_enum::WRITE_ROW) {
+            WriteRow(event);
+          } else if (event_type == spectrum::event_type_enum::UPDATE_ROW) {
+            UpdateRow(event);
+          } else if (event_type == spectrum::event_type_enum::DELETE_ROW) {
+            DeleteRow(event);
           } else if (event_type == spectrum::event_type_enum::PREPARE) {
             Prepare(event);
             response.set_event_id(event.id());

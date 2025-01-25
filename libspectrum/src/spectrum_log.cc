@@ -146,7 +146,7 @@ TABLE *open_event_table(THD *thd, thr_lock_type lock_type) {
   const char *db_name = "spectrum";
   const char *table_name = "events";
 
-  TABLE *table = spectrum_open_table(thd, db_name, table_name, 0, lock_type, thr_locked_row_action::THR_DEFAULT);
+  TABLE *table = spectrum_open_table(thd, db_name, table_name, lock_type, thr_locked_row_action::THR_DEFAULT);
   assert(table);
 
   table->use_all_columns();
@@ -168,7 +168,7 @@ TABLE *open_commit_table(THD *thd, thr_lock_type lock_type) {
   const char *db_name = "spectrum";
   const char *table_name = "commits";
 
-  TABLE *table = spectrum_open_table(thd, db_name, table_name, 0, lock_type, thr_locked_row_action::THR_DEFAULT);
+  TABLE *table = spectrum_open_table(thd, db_name, table_name, lock_type, thr_locked_row_action::THR_DEFAULT);
   assert(table);
 
   table->use_all_columns();
@@ -187,8 +187,8 @@ TABLE *open_commit_table(THD *thd, thr_lock_type lock_type) {
 }
 
 int close_table(THD* thd, TABLE *table) {
-  mysql_unlock_some_tables(thd, &table, 1);
-  spectrum_find_and_close_table(thd, table->s->db.str, table->s->table_name.str, 0);
+  spectrum_unlock_table(thd, table);
+  spectrum_close_table(thd, table);
   return 0;
 }
 
@@ -671,29 +671,78 @@ int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id obje
   return 0;
 }
 
-int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row) {
+int spectrum_log_write_row(THD *thd, TABLE *table, uchar *row) {
   spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
 
-  spectrum_print_row("spectrum_log_add_row_new", table, new_row);
-  spectrum_print_row("spectrum_log_add_old_new", table, old_row);
+  sql_print_information("spectrum_log_write_row[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
 
-  spectrum::ReplicateRowRequest event_body;
+  spectrum::WriteRowRequest event_body;
   spectrum_thread_fill(thd, event_body.mutable_thread());
   event_body.set_database(table->s->db.str);
   event_body.set_table(table->s->table_name.str);
   event_body.set_handler((uint64)table->file);
   event_body.set_lock_type(table->reginfo.lock_type);
   event_body.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
-  if (new_row) spectrum_row_fill_fields(table, new_row, event_body.mutable_new_row());
-  if (old_row) spectrum_row_fill_fields(table, old_row, event_body.mutable_old_row());
+  spectrum_row_fill_fields(table, row, event_body.mutable_row());
 
   spectrum::Event event;
-  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::ADD_ROW, event_body, &event);
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::WRITE_ROW, event_body, &event);
   spectrum_log_write_event(thd, &event);
   if (get_replication_stream(thd)->write(thd, &event, false)) {
-    sql_print_error("spectrum_log_add_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
+    sql_print_error("spectrum_log_write_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
+  }
+  return 0;
+}
+
+int spectrum_log_update_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row) {
+  spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
+  my_xid xid = storage_thd_context->xid();
+  event_id_t event_id = storage_thd_context->next_event_id();
+
+  sql_print_information("spectrum_log_update_row[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
+
+  spectrum::UpdateRowRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_database(table->s->db.str);
+  event_body.set_table(table->s->table_name.str);
+  event_body.set_handler((uint64)table->file);
+  event_body.set_lock_type(table->reginfo.lock_type);
+  event_body.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
+  spectrum_row_fill_fields(table, new_row, event_body.mutable_new_row());
+  spectrum_row_fill_fields(table, old_row, event_body.mutable_old_row());
+
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::UPDATE_ROW, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
+    sql_print_error("spectrum_log_update_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
+  }
+  return 0;
+}
+
+int spectrum_log_delete_row(THD *thd, TABLE *table, uchar *row) {
+  spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
+  my_xid xid = storage_thd_context->xid();
+  event_id_t event_id = storage_thd_context->next_event_id();
+
+  sql_print_information("spectrum_log_delete_row[%s:%s:%d]", table->s->db.str, table->s->table_name.str, table->file);
+
+  spectrum::DeleteRowRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_database(table->s->db.str);
+  event_body.set_table(table->s->table_name.str);
+  event_body.set_handler((uint64)table->file);
+  event_body.set_lock_type(table->reginfo.lock_type);
+  event_body.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
+  spectrum_row_fill_fields(table, row, event_body.mutable_row());
+
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::DELETE_ROW, event_body, &event);
+  spectrum_log_write_event(thd, &event);
+  if (get_replication_stream(thd)->write(thd, &event, false)) {
+    sql_print_error("spectrum_log_delete_row[%s:%s:%d]: stream write error", table->s->db.str, table->s->table_name.str, table->file);
   }
   return 0;
 }

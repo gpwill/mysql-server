@@ -211,7 +211,6 @@ TABLE *spectrum_open_table(
     THD *thd,
     const char *db_name,
     const char *table_name,
-    uint64 handler_id,
     thr_lock_type lock_type,
     thr_locked_row_action lock_action)
 {
@@ -223,10 +222,37 @@ TABLE *spectrum_open_table(
   if (!open_table(thd, tables, &otc)) {
     TABLE *table = tables->table;
     table->use_all_columns();
-    table->file->spectrum_handler_id = handler_id;
     return table;
   }
   return nullptr;
+}
+
+int spectrum_lock_table(THD *thd, TABLE *table, thr_lock_type lock_type) {
+  // Only lock if unlocked, ha_external_lock doesn't accept consecutive locks
+  if (table->file->get_lock_type() == F_UNLCK) {
+    table->reginfo.lock_type = lock_type;
+    MYSQL_LOCK *lock = mysql_lock_tables(thd, &table, 1, 0);
+    thd->lock = thd->lock ? mysql_lock_merge(thd->lock, lock) : lock;
+  }
+  return 0;
+}
+
+int spectrum_unlock_table(THD *thd, TABLE *table) {
+  mysql_unlock_some_tables(thd, &table, 1);
+  return 0;
+}
+
+int spectrum_close_table(THD *thd, TABLE *table_ptr) {
+  TABLE **table;
+  for (table = &thd->open_tables; *table; table = &(*table)->next) {
+    if (*table == table_ptr) {
+      break;
+    }
+  }
+  if (*table) {
+    close_thread_table(thd, table);
+  }
+  return 0;
 }
 
 TABLE *spectrum_find_or_open_table(
@@ -238,22 +264,14 @@ TABLE *spectrum_find_or_open_table(
     thr_locked_row_action lock_action)
 {
   for (TABLE *t = thd->open_tables; t; t = t->next) {
-    if ((!handler_id || t->file->spectrum_handler_id == handler_id) &&
+    if (t->file->spectrum_handler_id == handler_id &&
         !strcmp(t->s->db.str, db_name) &&
         !strcmp(t->s->table_name.str, table_name))
       return t;
   }
-  return spectrum_open_table(thd, db_name, table_name, handler_id, lock_type, lock_action);
-}
-
-TABLE *spectrum_find_or_open_table(
-    THD *thd,
-    const char *db_name,
-    const char *table_name,
-    thr_lock_type lock_type,
-    thr_locked_row_action lock_action)
-{
-  return spectrum_find_or_open_table(thd, db_name, table_name, 0, lock_type, lock_action);
+  TABLE *table = spectrum_open_table(thd, db_name, table_name, lock_type, lock_action);
+  table->file->spectrum_handler_id = handler_id;
+  return table;
 }
 
 void spectrum_find_and_close_table(
@@ -264,7 +282,7 @@ void spectrum_find_and_close_table(
 {
   TABLE **table;
   for (table = &thd->open_tables; *table; table = &(*table)->next) {
-    if ((!handler_id || (*table)->file->spectrum_handler_id == handler_id) &&
+    if ((*table)->file->spectrum_handler_id == handler_id &&
         !strcmp((*table)->s->db.str, db_name) &&
         !strcmp((*table)->s->table_name.str, table_name))
       break;

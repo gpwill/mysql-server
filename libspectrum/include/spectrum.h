@@ -36,7 +36,9 @@ enum event_type_enum {
    DELETE_TABLE,
    POST_DDL,
    UPDATE_METADATA,
-   ADD_ROW,
+   WRITE_ROW,
+   UPDATE_ROW,
+   DELETE_ROW,
    PREPARE,
    COMMIT
 };
@@ -149,10 +151,12 @@ extern void spectrum_row_extract_fields(TABLE *table, ::spectrum::Row *spectrum_
 extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum::Row *spectrum_row);
 extern void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread);
 
-TABLE *spectrum_open_table(THD *thd, const char *db_name, const char *table_name, uint64 handler_id, thr_lock_type lock_type, thr_locked_row_action lock_action);
-TABLE *spectrum_find_or_open_table(THD *thd, const char *db_name, const char *table_name, uint64 handler_id, thr_lock_type lock_type, thr_locked_row_action lock_action);
-TABLE *spectrum_find_or_open_table(THD *thd, const char *db_name, const char *table_name, thr_lock_type lock_type, thr_locked_row_action lock_action);
-void spectrum_find_and_close_table(THD *thd, const char *db_name, const char *table_name,uint64 handler_id);
+extern TABLE *spectrum_open_table(THD *thd, const char *db_name, const char *table_name, thr_lock_type lock_type, thr_locked_row_action lock_action);
+extern int spectrum_lock_table(THD *thd, TABLE *table, thr_lock_type lock_type);
+extern int spectrum_unlock_table(THD *thd, TABLE *table);
+extern int spectrum_close_table(THD *thd, TABLE *table);
+extern TABLE *spectrum_find_or_open_table(THD *thd, const char *db_name, const char *table_name, uint64 handler_id, thr_lock_type lock_type, thr_locked_row_action lock_action);
+extern void spectrum_find_and_close_table(THD *thd, const char *db_name, const char *table_name,uint64 handler_id);
 
 template<typename T>
 int spectrum_compute_update_metadata(THD *thd, const T *object);
@@ -190,7 +194,9 @@ extern int spectrum_log_create_table(THD *thd, const char* db_name, const char* 
 extern int spectrum_log_delete_table(THD *thd, const char* db_name, const char* table_name, const char* table_path);
 extern int spectrum_log_post_ddl(THD *thd);
 extern int spectrum_log_update_metadata(THD *thd, const char* table, dd::Object_id object_id, const char* object_name);
-extern int spectrum_log_add_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
+extern int spectrum_log_write_row(THD *thd, TABLE *table, uchar *row);
+extern int spectrum_log_update_row(THD *thd, TABLE *table, uchar *new_row, uchar *old_row);
+extern int spectrum_log_delete_row(THD *thd, TABLE *table, uchar *row);
 extern int spectrum_log_prepare(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_commit(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid);
