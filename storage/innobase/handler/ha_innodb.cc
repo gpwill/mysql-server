@@ -5942,6 +5942,10 @@ static int innobase_rollback(handlerton *hton, /*!< in: InnoDB handlerton */
   assert(hton == innodb_hton_ptr);
   DBUG_PRINT("trans", ("aborting transaction"));
 
+  if (is_spectrum_compute()) {
+    return spectrum_compute_rollback(thd, rollback_trx);
+  }
+
   trx_t *trx = check_trx_exists(thd);
 
   TrxInInnoDB trx_in_innodb(trx);

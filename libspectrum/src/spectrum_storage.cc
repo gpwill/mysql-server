@@ -101,8 +101,13 @@ THD *create_thd(const spectrum::Thread &spectrum_thread)
   } else {
     thd->query_id = (query_id_t)spectrum_thread.query_id();
   }
-
   return (thd);
+}
+
+void release_thd(THD *thd) {
+  thd->release_resources();
+  Global_THD_manager::get_instance()->remove_thd(thd);
+  delete thd;
 }
 
 bool check_and_coalesce_trx_read_write(THD *thd, bool all) {
@@ -603,6 +608,34 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
+    ::grpc::Status Rollback(::grpc::ServerContext* context, const ::spectrum::RollbackRequest* request, ::spectrum::RollbackResponse* response) {
+      THD *thd = create_thd(request->thread());
+      Transaction_ctx *trn_ctx = thd->get_transaction();
+      bool all = request->all();
+      bool real_trans = (all || !trn_ctx->is_active(Transaction_ctx::SESSION));
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
+
+      sql_print_information("Rollback[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
+
+      if (check_and_coalesce_trx_read_write(thd, all)) {
+        spectrum_log_open(thd);
+        spectrum_log_rollback(thd, all, real_trans);
+      } else {
+        sql_print_information("Rollback[%d]: skip spectrum log rollback for readonly transaction", thd->spectrum_thread_id);
+      }
+  
+      ha_rollback_low(thd, all);
+      thd_storage_context->set_prepared(false);
+
+      spectrum_log_close(thd);
+
+      if (real_trans) {
+        trn_ctx->cleanup();
+        thd->tx_priority = 0;
+      }
+      return grpc::Status::OK;
+    }
+
     ::grpc::Status BeginAttachableTransaction(::grpc::ServerContext* context, const ::spectrum::BeginAttachableTransactionRequest* request, ::spectrum::BeginAttachableTransactionResponse* response) {
       THD *thd;
 
@@ -932,7 +965,6 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
         ha_prepare_low(thd, false);
         ha_commit_low(thd, false);
       }
-
       ha_prepare_low(thd, all);
       thd_storage_context->set_prepared(true);
       return 0;
@@ -968,6 +1000,30 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       if (thd_storage_context->post_ddl()) {
         post_ddl(thd);
         thd_storage_context->set_post_ddl(false);
+      }
+      return 0;
+    }
+
+    int Rollback(spectrum::Event &event) {
+      spectrum::RollbackRequest request;
+      google::protobuf::TextFormat::ParseFromString(event.body(), &request);
+
+      THD *thd = create_thd(request.thread());
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
+      bool all = request.all();
+      commit_id_t commit_id = request.commit_id();
+
+      sql_print_information("Rollback: all=%d, commit_id=%d", all, commit_id);
+
+      close_thread_tables(thd);
+
+      ha_rollback_low(thd, all);
+      thd_storage_context->set_prepared(false);
+
+      spectrum_log_close(thd);
+
+      if (all) {
+        thd->mdl_context.release_transactional_locks();
       }
       return 0;
     }
@@ -1017,6 +1073,10 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
             stream->Write(response);
           } else if (event_type == spectrum::event_type_enum::COMMIT) {
             Commit(event);
+            response.set_event_id(event.id());
+            stream->Write(response);
+          } else if (event_type == spectrum::event_type_enum::ROLLBACK) {
+            Rollback(event);
             response.set_event_id(event.id());
             stream->Write(response);
           }

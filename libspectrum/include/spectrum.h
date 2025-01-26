@@ -40,7 +40,8 @@ enum event_type_enum {
    UPDATE_ROW,
    DELETE_ROW,
    PREPARE,
-   COMMIT
+   COMMIT,
+   ROLLBACK
 };
 }
 
@@ -188,6 +189,7 @@ extern int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_
 extern int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record);
 extern int spectrum_compute_prepare(THD *thd, bool all);
 extern int spectrum_compute_commit(THD *thd, bool all);
+extern int spectrum_compute_rollback(THD *thd, bool all);
 extern int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly);
 extern int spectrum_compute_end_attachable_transaction(THD *thd);
 extern int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket *ticket);
@@ -209,6 +211,7 @@ extern int spectrum_log_update_row(THD *thd, TABLE *table, uchar *new_row, uchar
 extern int spectrum_log_delete_row(THD *thd, TABLE *table, uchar *row);
 extern int spectrum_log_prepare(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_commit(THD *thd, bool all, bool real_trans);
+extern int spectrum_log_rollback(THD *thd, bool all, bool real_trans);
 extern int spectrum_log_write_commit(THD *thd, commit_id_t commit_id, my_xid xid);
 extern int spectrum_log_write_event(THD *thd, spectrum::Event *event);
 

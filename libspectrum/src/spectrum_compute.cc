@@ -644,6 +644,30 @@ int spectrum_compute_commit(THD *thd, bool all) {
   return 0;
 }
 
+int spectrum_compute_rollback(THD *thd, bool all) {
+  spectrum::RollbackRequest request;
+  spectrum::RollbackResponse response;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_rollback[%d]: all=%d", thd->spectrum_thread_id, all);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_all(all);
+
+  grpc::ClientContext context;
+  grpc::Status status = get_storage_primary_client()->Rollback(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_rollback[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
+    assert(false);
+  }
+
+  return 0;
+}
+
 int spectrum_compute_begin_attachable_transaction(THD *thd, bool readonly) {
   spectrum::BeginAttachableTransactionRequest request;
   spectrum::BeginAttachableTransactionResponse response;

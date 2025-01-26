@@ -24,3 +24,11 @@ select * from employees where id=1;
 id	first_name	last_name	hire_date	salary
 1	John	Doe	2024-12-01	555.00
 commit;
+update employees set salary=999 where id=1;
+select * from employees where id=1;
+id	first_name	last_name	hire_date	salary
+1	John	Doe	2024-12-01	999.00
+rollback;
+select * from employees where id=1;
+id	first_name	last_name	hire_date	salary
+1	John	Doe	2024-12-01	888.00

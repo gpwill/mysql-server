@@ -499,8 +499,6 @@ class ReplicationStream {
       commit_id_t max_commit_id;
       spectrum::CommitList commits;
       std::set<commit_id_t> prepared_commit_ids_copy;
-      TABLE *commit_table;
-      TABLE *event_table;
 
       spectrum::InitReplicationStreamRequest request;
       spectrum::InitReplicationStreamResponse response;
@@ -761,9 +759,13 @@ int spectrum_log_prepare(THD *thd, bool all, bool real_trans) {
     mysql_mutex_lock(&prepare_lock);
     prepare_locked = true;
     commit_id = next_commit_id();
-    spectrum_log_write_commit(thd, commit_id, xid);
+
+    mysql_mutex_lock(&commit_lock);
     prepared_commit_ids.insert(commit_id);
+    mysql_mutex_unlock(&commit_lock);
+
     storage_thd_context->set_commit_id(commit_id);
+    spectrum_log_write_commit(thd, commit_id, xid);
   }
 
   spectrum::PrepareRequest event_body;
@@ -795,8 +797,9 @@ int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
 
   if (real_trans) {
     mysql_mutex_lock(&commit_lock);
-    commit_locked = true;
     prepared_commit_ids.erase(commit_id);
+    mysql_mutex_unlock(&commit_lock);
+
     storage_thd_context->clear_commit_id();
   }
 
@@ -810,9 +813,35 @@ int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
   if (replication_stream->write(thd, &event, false)) {
     sql_print_error("spectrum_log_commit: stream write error");
   }
+  return 0;
+}
 
-  if (commit_locked) {
+int spectrum_log_rollback(THD *thd, bool all, bool real_trans) {
+  spectrum_storage::THD_context *storage_thd_context = thd->spectrum_storage_context();
+  my_xid xid = storage_thd_context->xid();
+  event_id_t event_id = storage_thd_context->next_event_id();
+  commit_id_t commit_id = storage_thd_context->commit_id();
+  bool commit_locked = false;
+
+  sql_print_information("spectrum_log_rollback: all=%d, real_trans=%d, xid=%d, commit_id=%d", all, real_trans, xid, commit_id);
+
+  if (real_trans) {
+    mysql_mutex_lock(&commit_lock);
+    prepared_commit_ids.erase(commit_id);
     mysql_mutex_unlock(&commit_lock);
+
+    storage_thd_context->clear_commit_id();
+  }
+
+  spectrum::RollbackRequest event_body;
+  spectrum_thread_fill(thd, event_body.mutable_thread());
+  event_body.set_all(all);
+  event_body.set_commit_id(commit_id);
+
+  spectrum::Event event;
+  spectrum_log_build_event(xid, event_id, spectrum::event_type_enum::ROLLBACK, event_body, &event);
+  if (replication_stream->write(thd, &event, false)) {
+    sql_print_error("spectrum_log_rollback: stream write error");
   }
   return 0;
 }
