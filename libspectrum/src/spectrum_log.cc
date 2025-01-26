@@ -91,8 +91,11 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include "spectrum_config.h"
 #include "spectrum.grpc.pb.h"
 
-std::shared_mutex prepare_mutex;
-std::shared_mutex commit_mutex;
+mysql_mutex_t prepare_lock;
+PSI_mutex_key prepare_lock_psi_key;
+
+mysql_mutex_t commit_lock;
+PSI_mutex_key commit_lock_psi_key;
 
 std::set<commit_id_t> prepared_commit_ids;
 
@@ -512,31 +515,29 @@ class ReplicationStream {
       last_replicated_commit_id = response.last_replicated_commit_id();
       sql_print_information("ReplicationStream::Init: stream_id=%d, last_replicated_commit_id=%d", m_stream_id, last_replicated_commit_id);
 
-      {
-        std::lock_guard<std::shared_mutex> prepare_exclusive_lock(prepare_mutex);
-        std::lock_guard<std::shared_mutex> commit_exclusive_lock(commit_mutex);
-
-        max_commit_id = spectrum_log_max_commit_id();
-        prepared_commit_ids_copy = prepared_commit_ids;
-
-        mysql_mutex_lock(&replication_lock);
-      }
+      mysql_mutex_lock(&prepare_lock);
+      mysql_mutex_lock(&commit_lock);
+      max_commit_id = spectrum_log_max_commit_id();
+      prepared_commit_ids_copy = prepared_commit_ids;
+      mysql_mutex_lock(&replication_lock);
+      mysql_mutex_unlock(&commit_lock);
+      mysql_mutex_unlock(&prepare_lock);
 
       m_stream = get_storage_replica_client()->Replicate(new grpc::ClientContext());
 
       spectrum_log_read_commits(thd, last_replicated_commit_id, max_commit_id, &commits, enum_tx_isolation::ISO_READ_UNCOMMITTED);
       for (spectrum::Commit commit : commits.commit()) {
+        bool prepared = (prepared_commit_ids_copy.find(commit.id()) != prepared_commit_ids_copy.end());
         spectrum::EventList events = commit.events();
+        spectrum::Event last_event = events.event(events.event_size() - 1);
+        assert(last_event.type() == spectrum::event_type_enum::PREPARE);
         for (spectrum::Event event : events.event()) {
+          if (event.type() == spectrum::event_type_enum::PREPARE &&
+              (event.id() != last_event.id() || !prepared)) {
+            event.set_type(spectrum::event_type_enum::COMMIT);
+          }
           if ((error = write_nolock(&event, false))) {
             goto end;
-          }
-          if (event.type() == spectrum::event_type_enum::PREPARE &&
-              prepared_commit_ids_copy.find(commit.id()) == prepared_commit_ids_copy.end()) {
-            event.set_type(spectrum::event_type_enum::COMMIT);
-            if ((error = write_nolock(&event, false))) {
-              goto end;
-            }
           }
         }
       }
@@ -752,12 +753,13 @@ int spectrum_log_prepare(THD *thd, bool all, bool real_trans) {
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
   commit_id_t commit_id = 0;
+  bool prepare_locked = false;
 
   sql_print_information("spectrum_log_prepare: all=%d, real_trans=%d, xid=%d", all, real_trans, xid);
 
-  std::shared_lock<std::shared_mutex> prepare_shared_lock(prepare_mutex);
-
   if (real_trans) {
+    mysql_mutex_lock(&prepare_lock);
+    prepare_locked = true;
     commit_id = next_commit_id();
     spectrum_log_write_commit(thd, commit_id, xid);
     prepared_commit_ids.insert(commit_id);
@@ -775,6 +777,10 @@ int spectrum_log_prepare(THD *thd, bool all, bool real_trans) {
   if (replication_stream->write(thd, &event, real_trans)) {
     sql_print_error("spectrum_log_prepare: stream write error");
   }
+
+  if (prepare_locked) {
+    mysql_mutex_unlock(&prepare_lock);
+  }
   return 0;
 }
 
@@ -783,12 +789,13 @@ int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
   commit_id_t commit_id = storage_thd_context->commit_id();
+  bool commit_locked = false;
 
   sql_print_information("spectrum_log_commit: all=%d, real_trans=%d, xid=%d, commit_id=%d", all, real_trans, xid, commit_id);
 
-  std::shared_lock<std::shared_mutex> commit_shared_lock(commit_mutex);
-
   if (real_trans) {
+    mysql_mutex_lock(&commit_lock);
+    commit_locked = true;
     prepared_commit_ids.erase(commit_id);
     storage_thd_context->clear_commit_id();
   }
@@ -803,10 +810,16 @@ int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
   if (replication_stream->write(thd, &event, false)) {
     sql_print_error("spectrum_log_commit: stream write error");
   }
+
+  if (commit_locked) {
+    mysql_mutex_unlock(&commit_lock);
+  }
   return 0;
 }
 
 int spectrum_log_init(THD *thd) {
+  mysql_mutex_init(prepare_lock_psi_key, &prepare_lock, MY_MUTEX_INIT_FAST);
+  mysql_mutex_init(commit_lock_psi_key, &commit_lock, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(max_commit_id_lock_psi_key, &max_commit_id_lock, MY_MUTEX_INIT_FAST);
   mysql_mutex_init(max_xid_lock_psi_key, &max_xid_lock, MY_MUTEX_INIT_FAST);
 

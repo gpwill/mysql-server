@@ -542,6 +542,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       bool all = request->all();
       Transaction_ctx *trn_ctx = thd->get_transaction();
       bool real_trans = (all || !trn_ctx->is_active(Transaction_ctx::SESSION));
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
 
       sql_print_information("Prepare[%d]: all=%d, real_trans=%d", thd->spectrum_thread_id, all, real_trans);
 
@@ -565,6 +566,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
         sql_print_information("Prepare[%d]: skip spectrum log prepare for readonly transaction", thd->spectrum_thread_id);
         ha_prepare_low(thd, all);
       }
+      thd_storage_context->set_prepared(true);
       return grpc::Status::OK; 
     }
 
@@ -585,6 +587,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       }
   
       ha_commit_low(thd, all, false);
+      thd_storage_context->set_prepared(false);
 
       spectrum_log_close(thd);
       
@@ -907,6 +910,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       google::protobuf::TextFormat::ParseFromString(event.body(), &request);
 
       THD *thd = create_thd(request.thread());
+      spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
       Transaction_ctx *trn_ctx = thd->get_transaction();
       bool all = request.all();
       commit_id_t commit_id = request.commit_id();
@@ -930,6 +934,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       }
 
       ha_prepare_low(thd, all);
+      thd_storage_context->set_prepared(true);
       return 0;
     }
 
@@ -942,11 +947,17 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       bool all = request.all();
       commit_id_t commit_id = request.commit_id();
 
+      if (!thd_storage_context->prepared()) {
+        event.set_type(spectrum::event_type_enum::PREPARE);
+        Prepare(event);
+      }
+
       sql_print_information("Commit: all=%d, commit_id=%d", all, commit_id);
 
       close_thread_tables(thd);
 
       ha_commit_low(thd, all, false);
+      thd_storage_context->set_prepared(false);
 
       spectrum_log_close(thd);
 

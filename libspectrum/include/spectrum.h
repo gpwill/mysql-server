@@ -75,10 +75,12 @@ class THD_context {
     commit_id_t m_commit_id;
     uint64 m_replication_stream_id;
     bool m_post_ddl;
+    bool m_prepared;
     std::unique_ptr<spectrum_log::THD_context> m_log_context;
 
   public:
-    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0), m_replication_stream_id(0), m_post_ddl(false), m_log_context(nullptr) {}
+    THD_context(THD *thd) : m_thd(thd), m_compute_query_id(0), m_event_id(0), m_commit_id(0),
+      m_replication_stream_id(0), m_post_ddl(false), m_prepared(false), m_log_context(nullptr) {}
 
     query_id_t compute_query_id() {
       return m_compute_query_id;
@@ -114,6 +116,14 @@ class THD_context {
 
     void set_post_ddl(bool post_ddl) {
       m_post_ddl = post_ddl;
+    }
+
+    bool prepared() {
+      return m_prepared;
+    }
+
+    void set_prepared(bool prepared) {
+      m_prepared = prepared;
     }
 
     spectrum_log::THD_context *log_context() {
