@@ -29,7 +29,19 @@ INCLUDE_DIRECTORIES(
   ${CMAKE_SOURCE_DIR}/sql
   ${CMAKE_SOURCE_DIR}/libspectrum/include
   ${SPECTRUM_PB_GENERATE_DIR}
+  ${RAPIDJSON_INCLUDE_DIR}
 )
+
+FOREACH(warning
+    "unused-parameter"
+    "unused-result"
+    )
+  MY_CHECK_CXX_COMPILER_WARNING("${warning}" HAS_WARN_FLAG)
+  IF(HAS_WARN_FLAG)
+    STRING_APPEND(CMAKE_CXX_FLAGS " ${HAS_WARN_FLAG}")
+    STRING_APPEND(CMAKE_C_FLAGS " ${HAS_WARN_FLAG}")
+  ENDIF()
+ENDFOREACH()
 
 MYSQL_ADD_PLUGIN(spectrum
   spectrum_plugin.cc

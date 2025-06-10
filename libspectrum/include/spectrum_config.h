@@ -23,6 +23,8 @@
 
 #define MAX_NODE_ID_LENGTH 256
 
+#include <string>
+
 enum node_role_enum {
    COMPUTE,
    STORAGE_PRIMARY,

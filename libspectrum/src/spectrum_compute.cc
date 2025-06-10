@@ -159,7 +159,9 @@ int spectrum_compute_delete_table(THD *thd, const dd::Table *table_def, const ch
   }
 
   const dd::Schema *schema_def = nullptr;
-  thd->dd_client()->acquire(table_def->schema_id(), &schema_def);
+  if (thd->dd_client()->acquire(table_def->schema_id(), &schema_def)) {
+    assert(false);
+  }
   if (!schema_def) {
     assert(false);
   }
@@ -524,7 +526,7 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
     sql_print_error("spectrum_write_row[%d:%s:%s:%d]: error=%s", thd->spectrum_thread_id, table->s->db.str, table->s->table_name.str, table->file, status.error_message().c_str());
     assert(false);
   }
-  spectrum_row_extract_fields(table, (spectrum::Row *)&response.row());
+  spectrum_row_extract_fields(table, &response.row());
   spectrum_print_row("spectrum_write_row_new", table);
 
   table->file->insert_id_for_cur_row = response.insert_id();
@@ -544,7 +546,7 @@ int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record,
   assert(old_record == table->record[1]);
 
   spectrum_print_row("spectrum_update_row_new", table, new_record);
-  spectrum_print_row("spectrum_update_row_old", table, (uchar *)old_record);
+  spectrum_print_row("spectrum_update_row_old", table, old_record);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
@@ -576,11 +578,11 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
     return 0;
   }
 
-  spectrum_print_row("spectrum_delete_row", table, (uchar *)record);
+  spectrum_print_row("spectrum_delete_row", table, record);
 
   spectrum::Thread *spectrum_thread = request.mutable_thread();
   spectrum_thread_fill(thd, spectrum_thread);
-  spectrum_row_fill_fields(table, (uchar *)record, request.mutable_row());
+  spectrum_row_fill_fields(table, record, request.mutable_row());
   request.set_database(table->s->db.str);
   request.set_table(table->s->table_name.str);
   request.set_handler((uint64)table->file);

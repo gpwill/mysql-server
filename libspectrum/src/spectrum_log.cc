@@ -109,7 +109,7 @@ commit_id_t next_commit_id() {
   return max_commit_id;
 }
 
-commit_id_t update_max_commit_id(commit_id_t commit_id) {
+void update_max_commit_id(commit_id_t commit_id) {
   mysql_mutex_lock(&max_commit_id_lock);
   if (commit_id > max_commit_id) {
     max_commit_id = commit_id;
@@ -127,7 +127,7 @@ my_xid next_xid() {
   return max_xid;
 }
 
-my_xid update_max_xid(my_xid xid) {
+void update_max_xid(my_xid xid) {
   mysql_mutex_lock(&max_xid_lock);
   if (xid > max_xid) {
     max_xid = xid;
@@ -287,7 +287,7 @@ int spectrum_log_read_events_by_xid(TABLE *event_table, my_xid xid, spectrum::Ev
   event_table->file->ha_index_init(0, true);
   error = event_table->file->ha_index_read_map(
         event_table->record[0], key, 1, HA_READ_KEY_EXACT);
-  while(!error && xid == event_table->field[0]->val_int()) {
+  while(!error && xid == (my_xid)event_table->field[0]->val_int()) {
     spectrum_print_row("spectrum_log_read_events_by_xid", event_table);
     spectrum_log_build_event(event_table, events->add_event());
     error = event_table->file->ha_index_next(event_table->record[0]);
@@ -791,7 +791,6 @@ int spectrum_log_commit(THD *thd, bool all, bool real_trans) {
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
   commit_id_t commit_id = storage_thd_context->commit_id();
-  bool commit_locked = false;
 
   sql_print_information("spectrum_log_commit: all=%d, real_trans=%d, xid=%d, commit_id=%d", all, real_trans, xid, commit_id);
 
@@ -821,7 +820,6 @@ int spectrum_log_rollback(THD *thd, bool all, bool real_trans) {
   my_xid xid = storage_thd_context->xid();
   event_id_t event_id = storage_thd_context->next_event_id();
   commit_id_t commit_id = storage_thd_context->commit_id();
-  bool commit_locked = false;
 
   sql_print_information("spectrum_log_rollback: all=%d, real_trans=%d, xid=%d, commit_id=%d", all, real_trans, xid, commit_id);
 

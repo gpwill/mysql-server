@@ -1,3 +1,8 @@
+# Build
+cmake .. -DCMAKE_INSTALL_PREFIX=/home/codespace/mysql-spectrum -DWITH_DEBUG=1 -DDOWNLOAD_BOOST=1 -DWITH_BOOST=/home/codespace/boost
+make
+make install
+
 # Initialize storage server
 ./spectrum-storage-init
 

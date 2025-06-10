@@ -154,12 +154,12 @@ extern spectrum::StorageNode::Stub* get_storage_primary_client();
 
 extern my_xid next_xid();
 
-extern void spectrum_print_row(char* method, TABLE* table);
-extern void spectrum_print_row(char* method, TABLE* table, uchar* record);
+extern void spectrum_print_row(const char* method, TABLE* table);
+extern void spectrum_print_row(const char* method, TABLE* table, const uchar* record);
 extern void spectrum_row_fill_fields(TABLE* table, ::spectrum::Row *spectrum_row);
-extern void spectrum_row_fill_fields(TABLE* table, uchar* record, ::spectrum::Row *spectrum_row);
-extern void spectrum_row_extract_fields(TABLE *table, ::spectrum::Row *spectrum_row);
-extern void spectrum_row_extract_fields(TABLE *table, uchar* record, ::spectrum::Row *spectrum_row);
+extern void spectrum_row_fill_fields(TABLE* table, const uchar* record, ::spectrum::Row *spectrum_row);
+extern void spectrum_row_extract_fields(TABLE *table, const ::spectrum::Row *spectrum_row);
+extern void spectrum_row_extract_fields(TABLE *table, uchar* record, const ::spectrum::Row *spectrum_row);
 extern void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread);
 
 extern TABLE *spectrum_open_table(THD *thd, const char *db_name, const char *table_name, thr_lock_type lock_type, thr_locked_row_action lock_action);

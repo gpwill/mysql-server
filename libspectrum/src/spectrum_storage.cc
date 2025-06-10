@@ -228,7 +228,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       MDL_ticket *ticket = nullptr;
       MDL_context::Ticket_iterator ticket_it = thd->mdl_context.get_tickets_for_duration(duration);
       for (ticket = ticket_it++; ticket != nullptr; ticket = ticket_it++) {
-        if (ticket->ticket_number == ticket_number) {
+        if (ticket->ticket_number == (uint32)ticket_number) {
           break;
         }
       }
@@ -240,7 +240,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       mysql_mutex_init(prepare_lock_psi_key, &prepare_lock, MY_MUTEX_INIT_FAST);
     }
 
-    ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) {
+    ::grpc::Status CreateTable(::grpc::ServerContext* context, const ::spectrum::CreateTableRequest* request, ::spectrum::CreateTableResponse* response) override {
       THD *thd;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
@@ -254,7 +254,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status DeleteTable(::grpc::ServerContext* context, const ::spectrum::DeleteTableRequest* request, ::spectrum::DeleteTableResponse* response) {
+    ::grpc::Status DeleteTable(::grpc::ServerContext* context, const ::spectrum::DeleteTableRequest* request, ::spectrum::DeleteTableResponse* response) override {
       THD *thd;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
@@ -268,7 +268,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) {
+    ::grpc::Status PostDDL(::grpc::ServerContext* context, const ::spectrum::PostDDLRequest* request, ::spectrum::PostDDLResponse* response) override {
       THD *thd = create_thd(request->thread());
       spectrum_storage::THD_context *thd_storage_context = thd->spectrum_storage_context();
 
@@ -281,7 +281,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status LockTable(::grpc::ServerContext* context, const ::spectrum::LockTableRequest* request, ::spectrum::LockTableResponse* response) {
+    ::grpc::Status LockTable(::grpc::ServerContext* context, const ::spectrum::LockTableRequest* request, ::spectrum::LockTableResponse* response) override {
       THD *thd;
       TABLE *table;
       const char* db_name = request->database().c_str();
@@ -299,7 +299,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status UnlockTable(::grpc::ServerContext* context, const ::spectrum::UnlockTableRequest* request, ::spectrum::UnlockTableResponse* response) {
+    ::grpc::Status UnlockTable(::grpc::ServerContext* context, const ::spectrum::UnlockTableRequest* request, ::spectrum::UnlockTableResponse* response) override {
       THD *thd;
       TABLE *table;
       const char* db_name = request->database().c_str();
@@ -317,9 +317,8 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status CloseTable(::grpc::ServerContext* context, const ::spectrum::CloseTableRequest* request, ::spectrum::CloseTableResponse* response) {
+    ::grpc::Status CloseTable(::grpc::ServerContext* context, const ::spectrum::CloseTableRequest* request, ::spectrum::CloseTableResponse* response) override {
       THD *thd;
-      TABLE *table;
       const char* db_name = request->database().c_str();
       const char* table_name = request->table().c_str();
       uint64 handler_id = request->handler();
@@ -332,7 +331,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status InitIndex(::grpc::ServerContext* context, const ::spectrum::InitIndexRequest* request, ::spectrum::InitIndexResponse* response) {
+    ::grpc::Status InitIndex(::grpc::ServerContext* context, const ::spectrum::InitIndexRequest* request, ::spectrum::InitIndexResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -348,7 +347,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status InitRnd(::grpc::ServerContext* context, const ::spectrum::InitRndRequest* request, ::spectrum::InitRndResponse* response) {
+    ::grpc::Status InitRnd(::grpc::ServerContext* context, const ::spectrum::InitRndRequest* request, ::spectrum::InitRndResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -364,7 +363,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status EndIndex(::grpc::ServerContext* context, const ::spectrum::EndIndexRequest* request, ::spectrum::EndIndexResponse* response) {
+    ::grpc::Status EndIndex(::grpc::ServerContext* context, const ::spectrum::EndIndexRequest* request, ::spectrum::EndIndexResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -384,7 +383,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status ReadRow(::grpc::ServerContext* context, const ::spectrum::ReadRowRequest* request, ::spectrum::ReadRowResponse* response) {
+    ::grpc::Status ReadRow(::grpc::ServerContext* context, const ::spectrum::ReadRowRequest* request, ::spectrum::ReadRowResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -411,7 +410,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status ReadNextRow(::grpc::ServerContext* context, const ::spectrum::ReadNextRowRequest* request, ::spectrum::ReadNextRowResponse* response) {
+    ::grpc::Status ReadNextRow(::grpc::ServerContext* context, const ::spectrum::ReadNextRowRequest* request, ::spectrum::ReadNextRowResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -440,7 +439,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status ReadPrevRow(::grpc::ServerContext* context, const ::spectrum::ReadPrevRowRequest* request, ::spectrum::ReadPrevRowResponse* response) {
+    ::grpc::Status ReadPrevRow(::grpc::ServerContext* context, const ::spectrum::ReadPrevRowRequest* request, ::spectrum::ReadPrevRowResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -461,7 +460,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status WriteRow(::grpc::ServerContext* context, const ::spectrum::WriteRowRequest* request, ::spectrum::WriteRowResponse* response) {
+    ::grpc::Status WriteRow(::grpc::ServerContext* context, const ::spectrum::WriteRowRequest* request, ::spectrum::WriteRowResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -492,7 +491,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status UpdateRow(::grpc::ServerContext* context, const ::spectrum::UpdateRowRequest* request, ::spectrum::UpdateRowResponse* response) {
+    ::grpc::Status UpdateRow(::grpc::ServerContext* context, const ::spectrum::UpdateRowRequest* request, ::spectrum::UpdateRowResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -521,7 +520,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status DeleteRow(::grpc::ServerContext* context, const ::spectrum::DeleteRowRequest* request, ::spectrum::DeleteRowResponse* response) {
+    ::grpc::Status DeleteRow(::grpc::ServerContext* context, const ::spectrum::DeleteRowRequest* request, ::spectrum::DeleteRowResponse* response) override {
       THD *thd;
       TABLE *table;
       thr_lock_type lock_type = (thr_lock_type)request->lock_type();
@@ -542,7 +541,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK;
     }
 
-    ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequest* request, ::spectrum::PrepareResponse* response) {
+    ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequest* request, ::spectrum::PrepareResponse* response) override {
       THD *thd = create_thd(request->thread());
       bool all = request->all();
       Transaction_ctx *trn_ctx = thd->get_transaction();
@@ -575,7 +574,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) {
+    ::grpc::Status Commit(::grpc::ServerContext* context, const ::spectrum::CommitRequest* request, ::spectrum::CommitResponse* response) override {
       THD *thd = create_thd(request->thread());
       Transaction_ctx *trn_ctx = thd->get_transaction();
       bool all = request->all();
@@ -608,7 +607,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status Rollback(::grpc::ServerContext* context, const ::spectrum::RollbackRequest* request, ::spectrum::RollbackResponse* response) {
+    ::grpc::Status Rollback(::grpc::ServerContext* context, const ::spectrum::RollbackRequest* request, ::spectrum::RollbackResponse* response) override {
       THD *thd = create_thd(request->thread());
       Transaction_ctx *trn_ctx = thd->get_transaction();
       bool all = request->all();
@@ -636,7 +635,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK;
     }
 
-    ::grpc::Status BeginAttachableTransaction(::grpc::ServerContext* context, const ::spectrum::BeginAttachableTransactionRequest* request, ::spectrum::BeginAttachableTransactionResponse* response) {
+    ::grpc::Status BeginAttachableTransaction(::grpc::ServerContext* context, const ::spectrum::BeginAttachableTransactionRequest* request, ::spectrum::BeginAttachableTransactionResponse* response) override {
       THD *thd;
 
       sql_print_information("BeginAttachableTransaction: readonly=%d", request->readonly());
@@ -651,7 +650,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status EndAttachableTransaction(::grpc::ServerContext* context, const ::spectrum::EndAttachableTransactionRequest* request, ::spectrum::EndAttachableTransactionResponse* response) {
+    ::grpc::Status EndAttachableTransaction(::grpc::ServerContext* context, const ::spectrum::EndAttachableTransactionRequest* request, ::spectrum::EndAttachableTransactionResponse* response) override {
       THD *thd;
 
       sql_print_information("EndAttachableTransaction");
@@ -663,7 +662,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status UpdateMetadata(::grpc::ServerContext* context, const ::spectrum::UpdateMetadataRequest* request, ::spectrum::UpdateMetadataResponse* response) {
+    ::grpc::Status UpdateMetadata(::grpc::ServerContext* context, const ::spectrum::UpdateMetadataRequest* request, ::spectrum::UpdateMetadataResponse* response) override {
       THD *thd;
       const std::string& table = request->table();
       const dd::Object_id object_id = request->object_id();
@@ -677,7 +676,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status AcquireMetadataLock(::grpc::ServerContext* context, const ::spectrum::AcquireMetadataLockRequest* request, ::spectrum::AcquireMetadataLockResponse* response) {
+    ::grpc::Status AcquireMetadataLock(::grpc::ServerContext* context, const ::spectrum::AcquireMetadataLockRequest* request, ::spectrum::AcquireMetadataLockResponse* response) override {
       THD *thd;
       MDL_key::enum_mdl_namespace namespace_ = static_cast<MDL_key::enum_mdl_namespace>(request->namespace_());
       const std::string& schema = request->schema();
@@ -706,7 +705,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status UpgradeMetadataLock(::grpc::ServerContext* context, const ::spectrum::UpgradeMetadataLockRequest* request, ::spectrum::UpgradeMetadataLockResponse* response) {
+    ::grpc::Status UpgradeMetadataLock(::grpc::ServerContext* context, const ::spectrum::UpgradeMetadataLockRequest* request, ::spectrum::UpgradeMetadataLockResponse* response) override {
       THD *thd;
       enum_mdl_duration duration = static_cast<enum_mdl_duration>(request->duration());
       int32_t ticket_number = request->ticket_number();
@@ -724,7 +723,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status ReleaseMetadataLock(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLockRequest* request, ::spectrum::ReleaseMetadataLockResponse* response) {
+    ::grpc::Status ReleaseMetadataLock(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLockRequest* request, ::spectrum::ReleaseMetadataLockResponse* response) override {
       THD *thd;
       enum_mdl_duration duration = static_cast<enum_mdl_duration>(request->duration());
       int32_t ticket_number = request->ticket_number();
@@ -741,7 +740,7 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK; 
     }
 
-    ::grpc::Status ReleaseMetadataLocks(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLocksRequest* request, ::spectrum::ReleaseMetadataLocksResponse* response) {
+    ::grpc::Status ReleaseMetadataLocks(::grpc::ServerContext* context, const ::spectrum::ReleaseMetadataLocksRequest* request, ::spectrum::ReleaseMetadataLocksResponse* response) override {
       THD *thd;
       bool transactional = request->transactional();
 
@@ -851,7 +850,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       spectrum_lock_table(thd, table, lock_type);
       empty_record(table);
 
-      spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.row());
+      spectrum_row_extract_fields(table, table->record[0], &request.row());
       spectrum_print_row("WriteRow", table, table->record[0]);
       if ((err = table->file->ha_write_row(table->record[0]))) {
         sql_print_error("WriteRow[%s:%s:%d]: error=%d", request.database().c_str(), request.table().c_str(), request.handler(), err);
@@ -878,7 +877,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       spectrum_lock_table(thd, table, lock_type);
       empty_record(table);
 
-      spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.new_row());
+      spectrum_row_extract_fields(table, table->record[0], &request.new_row());
       spectrum_print_row("UpdateRow", table, table->record[0]);
       key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
 
@@ -916,7 +915,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       spectrum_lock_table(thd, table, lock_type);
       empty_record(table);
 
-      spectrum_row_extract_fields(table, table->record[0], (spectrum::Row *)&request.row());
+      spectrum_row_extract_fields(table, table->record[0], &request.row());
       spectrum_print_row("DeleteRow", table, table->record[0]);
       key_copy((uchar *)key, table->record[0], table->key_info + table->s->primary_key, 0);
 
@@ -1028,7 +1027,7 @@ class StorageReplicaNodeImpl final : public spectrum::StorageReplicaNode::Servic
       return 0;
     }
 
-    ::grpc::Status InitReplicationStream(::grpc::ServerContext* context, const ::spectrum::InitReplicationStreamRequest* request, ::spectrum::InitReplicationStreamResponse* response) {
+    ::grpc::Status InitReplicationStream(::grpc::ServerContext* context, const ::spectrum::InitReplicationStreamRequest* request, ::spectrum::InitReplicationStreamResponse* response) override {
       mysql_mutex_lock(&replication_lock);
 
       active_stream_id++;

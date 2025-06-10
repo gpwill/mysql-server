@@ -112,11 +112,18 @@ void spectrum_thread_fill(THD *thd, spectrum::Thread *spectrum_thread) {
   spectrum_thread_fill_system_variables(thd, spectrum_thread);
 }
 
-void spectrum_print_row(char* method, TABLE* table) {
+void spectrum_repoint_field_to_record(TABLE *table, const uchar *old_rec, const uchar *new_rec) {
+  Field **fields = table->field;
+  ptrdiff_t ptrdiff = new_rec - old_rec;
+  for (uint i = 0; i < table->s->fields; i++)
+    fields[i]->move_field_offset(ptrdiff);
+}
+
+void spectrum_print_row(const char* method, TABLE* table) {
   spectrum_print_row(method, table, table->record[0]);
 }
 
-void spectrum_print_row(char* method, TABLE* table, uchar* record) {
+void spectrum_print_row(const char* method, TABLE* table, const uchar* record) {
   std::string row;
   char value_buffer[1024];
   String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
@@ -130,7 +137,7 @@ void spectrum_print_row(char* method, TABLE* table, uchar* record) {
 
   temp_read_set = table->read_set;
   table->read_set = nullptr;
-  repoint_field_to_record(table, table->record[0], record);
+  spectrum_repoint_field_to_record(table, table->record[0], record);
 
   for (Field **field = table->field; *field; field++) {
     row += (*field)->field_name;
@@ -148,7 +155,7 @@ void spectrum_print_row(char* method, TABLE* table, uchar* record) {
   }
   sql_print_information("%s[%s:%s:%d]: %s", method, table->s->db.str, table->s->table_name.str, hander_id, row.c_str());
 
-  repoint_field_to_record(table, record, table->record[0]);
+  spectrum_repoint_field_to_record(table, record, table->record[0]);
   table->read_set = temp_read_set;
 }
 
@@ -156,11 +163,11 @@ void spectrum_row_fill_fields(TABLE* table, spectrum::Row *spectrum_row) {
   spectrum_row_fill_fields(table, table->record[0], spectrum_row);
 }
 
-void spectrum_row_fill_fields(TABLE* table, uchar* record, spectrum::Row *spectrum_row) {
+void spectrum_row_fill_fields(TABLE* table, const uchar* record, spectrum::Row *spectrum_row) {
   char value_buffer[1024];
   String value(value_buffer, sizeof(value_buffer), &my_charset_bin);
 
-  repoint_field_to_record(table, table->record[0], record);
+  spectrum_repoint_field_to_record(table, table->record[0], record);
 
   for (Field **field = table->field; *field; field++) {
     spectrum::Field *spectrum_field = spectrum_row->add_fields();
@@ -174,19 +181,19 @@ void spectrum_row_fill_fields(TABLE* table, uchar* record, spectrum::Row *spectr
     }
   }
 
-  repoint_field_to_record(table, record, table->record[0]);
+  spectrum_repoint_field_to_record(table, record, table->record[0]);
 }
 
-void spectrum_row_extract_fields(TABLE *table, spectrum::Row *spectrum_row) {
+void spectrum_row_extract_fields(TABLE *table, const spectrum::Row *spectrum_row) {
   spectrum_row_extract_fields(table, table->record[0], spectrum_row);
 }
 
-void spectrum_row_extract_fields(TABLE *table, uchar* record, spectrum::Row *spectrum_row) {
+void spectrum_row_extract_fields(TABLE *table, uchar* record, const spectrum::Row *spectrum_row) {
   MY_BITMAP *temp_write_set;
 
   temp_write_set = table->write_set;
   table->write_set = nullptr;
-  repoint_field_to_record(table, table->record[0], record);
+  spectrum_repoint_field_to_record(table, table->record[0], record);
 
   memset(record, 0, table->s->null_bytes);
   for (int i = 0; i < spectrum_row->fields().size(); i++) {
@@ -204,7 +211,7 @@ void spectrum_row_extract_fields(TABLE *table, uchar* record, spectrum::Row *spe
   }
 
   table->write_set = temp_write_set;
-  repoint_field_to_record(table, record, table->record[0]);
+  spectrum_repoint_field_to_record(table, record, table->record[0]);
 }
 
 TABLE *spectrum_open_table(
