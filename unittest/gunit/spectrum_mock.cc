@@ -47,11 +47,11 @@ bool is_spectrum_compute() {
   return false;
 }
 
-void disable_spectrum_compute(THD *thd) {
+void disable_spectrum_compute(THD *) {
   return;
 }
 
-void enable_spectrum_compute(THD *thd) {
+void enable_spectrum_compute(THD *) {
   return;
 }
 
@@ -59,18 +59,18 @@ bool is_spectrum_storage_replica() {
   return false;
 }
 
-int spectrum_compute_acquire_mdl(THD *thd, MDL_ticket* ticket) {
+int spectrum_compute_acquire_mdl(THD *, MDL_ticket*) {
   return 0;
 }
 
-int spectrum_compute_upgrade_mdl(THD *thd, MDL_ticket* ticket, enum_mdl_type new_type) {
+int spectrum_compute_upgrade_mdl(THD *, MDL_ticket*, enum_mdl_type) {
   return 0;
 }
 
-int spectrum_compute_release_mdl(THD *thd, enum_mdl_duration duration, int32 ticket_number) {
+int spectrum_compute_release_mdl(THD *, enum_mdl_duration, int32) {
   return 0;
 }
 
-int spectrum_compute_release_mdls(THD *thd, bool transactional) {
+int spectrum_compute_release_mdls(THD *, bool) {
   return 0;
 }
