@@ -187,6 +187,7 @@ extern int spectrum_compute_read_prev_row(THD *thd, TABLE *table, uint index, uc
 extern int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record);
 extern int spectrum_compute_update_row(THD *thd, TABLE *table, const uchar *old_record, uchar *new_record);
 extern int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record);
+extern int spectrum_compute_get_auto_increment(THD *thd, const TABLE *table, ulonglong *autoinc);
 extern int spectrum_compute_prepare(THD *thd, bool all);
 extern int spectrum_compute_commit(THD *thd, bool all);
 extern int spectrum_compute_rollback(THD *thd, bool all);

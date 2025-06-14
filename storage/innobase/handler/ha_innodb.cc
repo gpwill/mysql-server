@@ -1858,6 +1858,10 @@ allowed, else the thread is put into sleep.
 @param[in,out]  prebuilt        row prebuilt handler
 @return InnoDB error code. */
 static inline dberr_t innobase_srv_conc_enter_innodb(row_prebuilt_t *prebuilt) {
+  if (is_spectrum_compute()) {
+    return DB_SUCCESS;
+  }
+
   /* We rely on server to do external_lock(F_UNLCK) to reset the
   srv_conc.n_active counter. */
   if (prebuilt->skip_concurrency_ticket()) {
@@ -1895,6 +1899,10 @@ static inline dberr_t innobase_srv_conc_enter_innodb(row_prebuilt_t *prebuilt) {
 any spare tickets.
 @param[in,out]  prebuilt        row prebuilt handler */
 static inline void innobase_srv_conc_exit_innodb(row_prebuilt_t *prebuilt) {
+  if (is_spectrum_compute()) {
+    return;
+  }
+
   /* We rely on server to do external_lock(F_UNLCK) to reset the
   srv_conc.n_active counter. */
   if (prebuilt->skip_concurrency_ticket()) {
@@ -7213,10 +7221,6 @@ int ha_innobase::open(const char *name, int, uint open_flags,
   m_upd_buf = nullptr;
   m_upd_buf_size = 0;
 
-  if (is_spectrum_compute()) {
-    return 0;
-  }
-
   /* Get pointer to a table object in InnoDB dictionary cache.
   For intrinsic table, get it from session private data */
   ib_table = thd_to_innodb_session(thd)->lookup_table_handler(norm_name);
@@ -7598,6 +7602,7 @@ int ha_innobase::open(const char *name, int, uint open_flags,
 
     dict_table_autoinc_unlock(ib_table);
   }
+  m_spectrum_autoinc_initialized = false;
 
   /* Set plugin parser for fulltext index */
   for (uint i = 0; i < table->s->keys; i++) {
@@ -7695,10 +7700,6 @@ uint ha_innobase::max_supported_key_part_length(
 
 int ha_innobase::close() {
   DBUG_TRACE;
-
-  if (is_spectrum_compute()) {
-    return 0;
-  }
 
   if (m_prebuilt->m_temp_read_shared) {
     temp_prebuilt_vec *vec = m_prebuilt->table->temp_prebuilt;
@@ -9032,10 +9033,6 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
   /* Increase the write count of handler */
   ha_statistic_increment(&System_status_var::ha_write_count);
 
-  if (is_spectrum_compute()) {
-    return spectrum_compute_write_row(m_user_thd, table, record);
-  }
-
   if (m_prebuilt->table->is_intrinsic()) {
     return intrinsic_table_write_row(record);
   }
@@ -9067,7 +9064,7 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
     ut_print_buf(stderr, ((const byte *)trx) - 100, 200);
     putc('\n', stderr);
     ut_error;
-  } else if (!trx_is_started(trx)) {
+  } else if (!is_spectrum_compute() && !trx_is_started(trx)) {
     ++trx->will_lock;
   }
 
@@ -9107,7 +9104,9 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
     /* Build the template used in converting quickly between
     the two database formats */
 
-    build_template(true);
+    if (!is_spectrum_compute()) {
+      build_template(true);
+    }
   }
 
   error = innobase_srv_conc_enter_innodb(m_prebuilt);
@@ -9116,8 +9115,15 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
     goto report_error;
   }
 
-  /* Execute insert graph that will result in actual insert. */
-  error = row_insert_for_mysql((byte *)record, m_prebuilt);
+  if (is_spectrum_compute()) {
+    error_result = spectrum_compute_write_row(m_user_thd, table, record);
+    if (error_result) {
+      goto func_exit;
+    }
+  } else {
+    /* Execute insert graph that will result in actual insert. */
+    error = row_insert_for_mysql((byte *)record, m_prebuilt);
+  }
 
   DEBUG_SYNC(m_user_thd, "ib_after_row_insert");
 
@@ -15439,6 +15445,16 @@ int ha_innobase::delete_table(const char *name, const dd::Table *table_def) {
     }
 
     dd_client->invalidate(dd_space.get());
+
+    char norm_name[FN_REFLEN];
+    if (!normalize_table_name(norm_name, name)) {
+      /* purecov: begin inspected */
+      ut_d(ut_error);
+      ut_o(return (HA_ERR_TOO_LONG_PATH));
+      /* purecov: end */
+    }
+    innodb_session_t *priv = thd_to_innodb_session(thd);
+    priv->unregister_table_handler(norm_name);
     return 0;
   }
 
@@ -18747,6 +18763,8 @@ int ha_innobase::external_lock(THD *thd, /*!< in: handle to the user thread */
   DBUG_TRACE;
   DBUG_PRINT("enter", ("lock_type: %d", lock_type));
 
+  update_thd(thd);
+
   if (is_spectrum_compute()) {
     m_user_thd = thd;
     if (lock_type == F_UNLCK) {
@@ -18759,8 +18777,6 @@ int ha_innobase::external_lock(THD *thd, /*!< in: handle to the user thread */
       return spectrum_compute_lock_table(m_user_thd, table);
     }
   }
-
-  update_thd(thd);
 
   trx_t *trx = m_prebuilt->trx;
 
@@ -19768,6 +19784,12 @@ dberr_t ha_innobase::innobase_get_autoinc(
   m_prebuilt->autoinc_error = innobase_lock_autoinc();
 
   if (m_prebuilt->autoinc_error == DB_SUCCESS) {
+    if (is_spectrum_compute() && !m_spectrum_autoinc_initialized) {
+      spectrum_compute_get_auto_increment(ha_thd(), table, value);
+      dict_table_autoinc_initialize(m_prebuilt->table, *value);
+      m_spectrum_autoinc_initialized = true;
+    }
+
     /* Determine the first value of the interval */
     *value = dict_table_autoinc_read(m_prebuilt->table);
 
@@ -19781,11 +19803,15 @@ dberr_t ha_innobase::innobase_get_autoinc(
   return (m_prebuilt->autoinc_error);
 }
 
-void ha_innobase::release_auto_increment() {
-  if (is_spectrum_compute()) {
-    return;
-  }
+ulonglong ha_innobase::ha_current_auto_increment() {
+  ulonglong autoinc = 0;
+  dict_table_autoinc_lock(m_prebuilt->table);
+  autoinc = dict_table_autoinc_read(m_prebuilt->table);
+  dict_table_autoinc_unlock(m_prebuilt->table);
+  return autoinc;
+}
 
+void ha_innobase::release_auto_increment() {
   trx_t *trx = m_prebuilt->trx;
   TrxInInnoDB trx_in_innodb(trx);
 

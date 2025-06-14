@@ -335,6 +335,9 @@ class ha_innobase : public handler {
   /** Do cleanup for auto increment calculation. */
   void release_auto_increment() override;
 
+  /* Used by spectrum to get current autoinc value from storage node */
+  ulonglong ha_current_auto_increment() override;
+
   bool get_error_message(int error, String *buf) override;
 
   bool get_foreign_dup_key(char *, uint, char *, uint) override;
@@ -675,6 +678,8 @@ class ha_innobase : public handler {
 
   /** If mysql has locked with external_lock() */
   bool m_mysql_has_locked;
+
+  bool m_spectrum_autoinc_initialized;
 };
 
 struct trx_t;

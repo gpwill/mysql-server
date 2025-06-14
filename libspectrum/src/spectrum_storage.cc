@@ -541,6 +541,21 @@ class StorageNodeImpl final : public spectrum::StorageNode::Service {
       return grpc::Status::OK;
     }
 
+    ::grpc::Status GetAutoIncrement(::grpc::ServerContext* context, const ::spectrum::GetAutoIncrementRequest* request, ::spectrum::GetAutoIncrementResponse* response) override {
+      THD *thd;
+      TABLE *table;
+      thr_lock_type lock_type = (thr_lock_type)request->lock_type();
+      thr_locked_row_action lock_action = (thr_locked_row_action)request->lock_action();
+
+      thd = create_thd(request->thread());
+      table = spectrum_find_or_open_table(thd, request->database().c_str(), request->table().c_str(), request->handler(), lock_type, lock_action);
+      ulonglong autoinc = table->file->ha_current_auto_increment();
+      sql_print_information("GetAutoIncrement[%d]: autoinc=%d", thd->spectrum_thread_id, autoinc);
+
+      response->set_autoinc(autoinc);
+      return grpc::Status::OK;
+    }
+
     ::grpc::Status Prepare(::grpc::ServerContext* context, const ::spectrum::PrepareRequest* request, ::spectrum::PrepareResponse* response) override {
       THD *thd = create_thd(request->thread());
       bool all = request->all();

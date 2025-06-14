@@ -37,6 +37,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
 #include <algorithm>
 #include <map>
 #include <vector>
+#include <spectrum.h>
 
 #include "dict0stats.h"
 #include "dyn0buf.h"
@@ -2822,6 +2823,11 @@ the persistent statistics
 storage */
 {
   ut_ad(!dict_sys_mutex_own());
+
+  if (is_spectrum_compute()) {
+    dict_stats_empty_table(table);
+    return (DB_SUCCESS);
+  }
 
   if (table->ibd_file_missing) {
     if (!dict_table_is_discarded(table)) {

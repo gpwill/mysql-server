@@ -32,6 +32,8 @@ service StorageNode {
   rpc UpdateRow(UpdateRowRequest) returns (UpdateRowResponse) {} 
   rpc DeleteRow(DeleteRowRequest) returns (DeleteRowResponse) {} 
 
+  rpc GetAutoIncrement(GetAutoIncrementRequest) returns (GetAutoIncrementResponse) {}
+
   rpc Prepare(PrepareRequest) returns (PrepareResponse) {}
   rpc Commit(CommitRequest) returns (CommitResponse) {} 
   rpc Rollback(RollbackRequest) returns (RollbackResponse) {}
@@ -323,6 +325,19 @@ message DeleteRowRequest {
 }
 
 message DeleteRowResponse {
+}
+
+message GetAutoIncrementRequest {
+  Thread thread = 1;
+  string database = 2;
+  string table = 3;
+  int64 handler = 4;
+  int32 lock_type = 5;
+  int32 lock_action = 6;
+}
+
+message GetAutoIncrementResponse {
+  int64 autoinc = 1;
 }
 
 message PrepareRequest {

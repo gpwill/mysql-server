@@ -529,7 +529,6 @@ int spectrum_compute_write_row(THD *thd, TABLE *table, uchar *record) {
   spectrum_row_extract_fields(table, &response.row());
   spectrum_print_row("spectrum_write_row_new", table);
 
-  table->file->insert_id_for_cur_row = response.insert_id();
   return 0;
 }
 
@@ -595,6 +594,35 @@ int spectrum_compute_delete_row(THD *thd, TABLE *table, const uchar *record) {
     assert(false);
   }
 
+  return 0;
+}
+
+int spectrum_compute_get_auto_increment(THD *thd, const TABLE *table, ulonglong *autoinc) {
+  spectrum::GetAutoIncrementRequest request;
+  spectrum::GetAutoIncrementResponse response;
+
+  if (thd->spectrum_compute_disabled) {
+    return 0;
+  }
+
+  sql_print_information("spectrum_get_auto_increment[%d]", thd->spectrum_thread_id);
+
+  spectrum::Thread *spectrum_thread = request.mutable_thread();
+  spectrum_thread_fill(thd, spectrum_thread);
+  request.set_database(table->s->db.str);
+  request.set_table(table->s->table_name.str);
+  request.set_handler((uint64)table->file);
+  request.set_lock_type(table->reginfo.lock_type);
+  request.set_lock_action(table->pos_in_table_list->lock_descriptor().type);
+
+  grpc::ClientContext context;
+  grpc::Status status = get_storage_primary_client()->GetAutoIncrement(&context, request, &response);
+  if (!status.ok()) {
+    sql_print_error("spectrum_get_auto_increment[%d]: error=%s", thd->spectrum_thread_id, status.error_message().c_str());
+    assert(false);
+  }
+  *autoinc = response.autoinc();
+  sql_print_information("spectrum_get_auto_increment[%d]: autoinc=%d", thd->spectrum_thread_id, *autoinc);
   return 0;
 }
 

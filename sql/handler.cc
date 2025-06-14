@@ -4027,6 +4027,10 @@ void handler::get_auto_increment(ulonglong offset [[maybe_unused]],
   *first_value = nr;
 }
 
+ulonglong handler::ha_current_auto_increment() {
+  return 0;
+}
+
 void handler::ha_release_auto_increment() {
   assert(table_share->tmp_table != NO_TMP_TABLE || m_lock_type != F_UNLCK ||
          (!next_insert_id && !insert_id_for_cur_row));

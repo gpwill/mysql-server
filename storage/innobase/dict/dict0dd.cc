@@ -40,6 +40,8 @@ Data dictionary interface */
 #include <my_base.h>
 #endif /* !UNIV_HOTBACKUP */
 
+#include <spectrum.h>
+
 #include <dd/properties.h>
 #include "dict0crea.h"
 #include "dict0dd.h"
@@ -4789,6 +4791,10 @@ void dd_load_tablespace(const Table *dd_table, dict_table_t *table,
                         uint32_t expected_fsp_flags) {
   ut_ad(!table->is_temporary());
   ut_ad(dict_sys_mutex_own());
+
+  if (is_spectrum_compute()) {
+    return;
+  }
 
   /* The system and temporary tablespaces are preloaded and
   always available. */
